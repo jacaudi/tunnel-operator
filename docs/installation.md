@@ -5,8 +5,9 @@
 - **A Kubernetes cluster** and `kubectl` pointed at it. The envtest suite runs against Kubernetes
   1.30.
 - **Privileged pods allowed in the gateway's namespace.** The server pod has a privileged `sysctl`
-  init container and an `agent` container with `NET_ADMIN`; Pod Security `baseline` forbids both.
-  If your cluster enforces Pod Security admission, label that namespace
+  init container, an `agent` container with `NET_ADMIN`, and a `gluetun` container with `NET_ADMIN`
+  and a writable root filesystem; Pod Security `baseline` forbids the privileged container and the
+  added capability. If your cluster enforces Pod Security admission, label that namespace
   `pod-security.kubernetes.io/enforce: privileged`.
 - **Go 1.26 and `make`** on your workstation. `make deploy` regenerates the CRDs and RBAC and
   downloads `controller-gen` and `kustomize` into `./bin`.
