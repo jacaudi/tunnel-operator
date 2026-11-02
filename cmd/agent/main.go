@@ -11,8 +11,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/go-logr/stdr"
 	"github.com/jacaudi/wireguard-operator/internal/agent"
+	"github.com/jacaudi/wireguard-operator/internal/datapath"
+	"github.com/jacaudi/wireguard-operator/internal/resources"
 	"github.com/jacaudi/wireguard-operator/internal/wireguard"
 )
 
@@ -23,7 +26,7 @@ func main() {
 	var wgUserspaceImplementationFallback string
 	var wireguardListenPort int
 	flag.StringVar(&configFilePath, "state", "./state.json", "The location of the file that states the desired state")
-	flag.StringVar(&iface, "wg-iface", "wg0", "the wg device name. Default is wg0")
+	flag.StringVar(&iface, "wg-iface", resources.WgInterface, "the wg device name. Default is wg0")
 	flag.StringVar(&wgUserspaceImplementationFallback, "wg-userspace-implementation-fallback", "wireguard-go", "The userspace implementation of wireguard to fallback to")
 	flag.IntVar(&wireguardListenPort, "wg-listen-port", 51820, "the UDP port wireguard is listening on")
 	flag.IntVar(&verbosity, "v", 1, "the verbosity level")
@@ -76,11 +79,20 @@ func main() {
 		WgUserspaceImplementationFallback: wgUserspaceImplementationFallback,
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
+	dp := datapath.New()
+
 	close, err := agent.OnStateChange(configFilePath, log.WithName("onStateChange"), func(state agent.State) {
 		log.Info("Received a new state")
 		err := wg.Sync(state)
 		if err != nil {
 			log.Error(err, "Error while sycncing wireguard")
+			return
+		}
+		if err := dp.Ensure(ctx, agent.PeerCIDR(state)); err != nil {
+			log.Error(err, "Error while asserting the datapath")
 		}
 	})
 
@@ -90,6 +102,11 @@ func main() {
 	}
 
 	defer close()
+
+	gluetunClient := &http.Client{Timeout: 2 * time.Second}
+	gluetunHealthURL := "http://" + resources.GluetunHealthAddress + "/"
+
+	go reassert(ctx, dp, configFilePath, log)
 
 	httpLog := log.WithName("http")
 
@@ -118,13 +135,22 @@ func main() {
 			return
 		}
 
+		if err := dp.Err(); err != nil {
+			httpLog.Error(err, "agent is not ready as the datapath is not asserted")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+
+		if err := agent.GluetunHealthy(r.Context(), gluetunClient, gluetunHealthURL); err != nil {
+			httpLog.Error(err, "agent is not ready as gluetun is not healthy")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+
 		httpLog.V(2).Info("agent is ready")
 
 		w.WriteHeader(http.StatusOK)
 	})
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
 
 	// Timeouts are not optional here. This listener answers the kubelet's health
 	// probes, and with no ReadHeaderTimeout a client that opens a connection and
@@ -146,5 +172,27 @@ func main() {
 
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 		log.Error(err, "Health server error")
+	}
+}
+
+// reassert re-asserts the datapath for the current state every resources.ReassertInterval until ctx
+// is done; a gluetun restart can flush the iptables rules.
+func reassert(ctx context.Context, dp *datapath.Datapath, statePath string, logger logr.Logger) {
+	ticker := time.NewTicker(resources.ReassertInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		state, _, err := agent.GetDesiredState(statePath)
+		if err != nil {
+			logger.Error(err, "Error while reading the state to re-assert the datapath")
+			continue
+		}
+		if err := dp.Ensure(ctx, agent.PeerCIDR(state)); err != nil {
+			logger.Error(err, "Error while re-asserting the datapath")
+		}
 	}
 }

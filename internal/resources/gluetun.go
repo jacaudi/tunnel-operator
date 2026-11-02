@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -39,3 +40,19 @@ func ReservedGluetunEnv(localCIDRs []string) []corev1.EnvVar {
 		{Name: "WIREGUARD_MTU", Value: strconv.Itoa(TunnelMTU)},
 	}
 }
+
+// The server pod's fail-closed routing (design §3.5).
+const (
+	// PeerTable routes peerCIDR back to wg0.
+	PeerTable = 51821
+	// PeerRulePref is PeerTable's ip rule, ahead of gluetun's rules (98-101), so provider replies for a
+	// peer reach wg0 instead of re-entering the tunnel.
+	PeerRulePref = 90
+	// BlackholeTable holds only a blackhole default route.
+	BlackholeTable = 51822
+	// BlackholePref sends everything that arrived on wg0 to BlackholeTable once gluetun's tunnel table
+	// (rule 101) did not route it. This is the fail-closed rule.
+	BlackholePref = 102
+	// ReassertInterval is how often the agent re-asserts its routes, rules and iptables rules.
+	ReassertInterval = 10 * time.Second
+)
