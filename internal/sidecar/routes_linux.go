@@ -107,8 +107,13 @@ func deleteStale(stale []route) error {
 }
 
 // deleteIPv6Defaults deletes every IPv6 default route in the main table, ignoring one already gone.
+// A kernel with no IPv6 stack (ipv6.disable=1) refuses the dump or the delete with EOPNOTSUPP or
+// EAFNOSUPPORT: it has no IPv6 default to delete, so those errnos are treated like a route already gone.
 func deleteIPv6Defaults() error {
 	listed, err := netlink.RouteListFiltered(netlink.FAMILY_V6, &netlink.Route{Table: unix.RT_TABLE_MAIN}, netlink.RT_FILTER_TABLE)
+	if noIPv6Stack(err) {
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("list routes: %w", err)
 	}
@@ -126,7 +131,7 @@ func deleteIPv6Defaults() error {
 			Dst: &net.IPNet{IP: net.IPv6zero, Mask: net.CIDRMask(0, 128)}, Gw: r.Gw,
 			LinkIndex: r.LinkIndex, Priority: r.Priority, Scope: r.Scope, Table: unix.RT_TABLE_MAIN,
 		}
-		if err := netlink.RouteDel(del); err != nil && !errors.Is(err, unix.ESRCH) {
+		if err := netlink.RouteDel(del); err != nil && !errors.Is(err, unix.ESRCH) && !noIPv6Stack(err) {
 			return fmt.Errorf("delete IPv6 default route: %w", err)
 		}
 	}
@@ -136,4 +141,9 @@ func deleteIPv6Defaults() error {
 // ipNet returns p as the *net.IPNet netlink takes.
 func ipNet(p netip.Prefix) *net.IPNet {
 	return &net.IPNet{IP: p.Addr().AsSlice(), Mask: net.CIDRMask(p.Bits(), p.Addr().BitLen())}
+}
+
+// noIPv6Stack reports whether err says the kernel has no IPv6 stack.
+func noIPv6Stack(err error) bool {
+	return errors.Is(err, unix.EOPNOTSUPP) || errors.Is(err, unix.EAFNOSUPPORT)
 }
