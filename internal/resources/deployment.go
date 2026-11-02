@@ -30,6 +30,10 @@ import (
 const (
 	// HTTPPort is the port for HTTP health checks.
 	HTTPPort = 8080
+
+	// UserspaceImplementation is the userspace WireGuard binary the agent starts when the kernel module
+	// is unavailable.
+	UserspaceImplementation = "wireguard-go"
 )
 
 // DeploymentBuilder builds deployments for wireguard resources.
@@ -135,7 +139,7 @@ func (b *DeploymentBuilder) agentContainer(wg *v1alpha1.Wireguard, readOnlyRootF
 			"--wg-iface", WgInterface,
 			"--wg-listen-port", fmt.Sprintf("%d", WireguardPort),
 			"--state", "/tmp/wireguard/state.json",
-			"--wg-userspace-implementation-fallback", "wireguard-go",
+			"--wg-userspace-implementation-fallback", UserspaceImplementation,
 		},
 		Ports: []corev1.ContainerPort{
 			{

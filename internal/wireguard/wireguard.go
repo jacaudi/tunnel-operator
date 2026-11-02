@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"slices"
 	"syscall"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
+// MTU is the server link's MTU. A client link uses resources.TunnelMTU.
 const MTU = 1420
 
 func syncRoute(iface string, cidr string, gw net.IP, family int) error {
@@ -57,31 +59,55 @@ func syncRoute(iface string, cidr string, gw net.IP, family int) error {
 	return nil
 }
 
-func syncAddress(iface string, ipWithMask *net.IPNet, family int) error {
+// addressChanges returns the addresses to remove from a link that holds have so that want is its only
+// address, in have's order, and whether want must be added.
+func addressChanges(have []netip.Prefix, want netip.Prefix) (remove []netip.Prefix, add bool) {
+	for _, p := range have {
+		if p != want {
+			remove = append(remove, p)
+		}
+	}
+	return remove, !slices.Contains(have, want)
+}
+
+// netlinkAddr converts p to the form netlink adds and deletes.
+func netlinkAddr(p netip.Prefix) *netlink.Addr {
+	return &netlink.Addr{IPNet: &net.IPNet{IP: p.Addr().AsSlice(), Mask: net.CIDRMask(p.Bits(), 32)}}
+}
+
+// SyncAddress makes want the only IPv4 address on iface and brings iface up: it removes every other
+// IPv4 address and adds want when it is absent.
+func SyncAddress(iface string, want netip.Prefix) error {
 	link, err := netlink.LinkByName(iface)
 	if err != nil {
 		return err
 	}
 
-	addresses, err := netlink.AddrList(link, family)
+	addresses, err := netlink.AddrList(link, syscall.AF_INET)
 	if err != nil {
 		return fmt.Errorf("netlink addr list: %w", err)
 	}
 
-	if len(addresses) != 0 {
-		return nil
+	have := make([]netip.Prefix, 0, len(addresses))
+	for _, a := range addresses {
+		addr, _ := netip.AddrFromSlice(a.IP.To4())
+		bits, _ := a.Mask.Size()
+		have = append(have, netip.PrefixFrom(addr, bits))
 	}
 
-	if err := netlink.AddrAdd(link, &netlink.Addr{
-		IPNet: ipWithMask,
-	}); err != nil {
-		return fmt.Errorf("netlink addr add: %w", err)
+	remove, add := addressChanges(have, want)
+	for _, p := range remove {
+		if err := netlink.AddrDel(link, netlinkAddr(p)); err != nil {
+			return fmt.Errorf("netlink addr del %s: %w", p, err)
+		}
+	}
+	if add {
+		if err := netlink.AddrAdd(link, netlinkAddr(want)); err != nil {
+			return fmt.Errorf("netlink addr add: %w", err)
+		}
 	}
 
-	if err := netlink.LinkSetUp(link); err != nil {
-		return err
-	}
-	return nil
+	return netlink.LinkSetUp(link)
 }
 
 func createLinkUsingUserspaceImpl(iface string, wgUserspaceImplementationFallback string) error {
@@ -152,12 +178,12 @@ func waitForLink(iface string, timeout time.Duration) error {
 	}
 }
 
-func createLinkUsingKernelModule(iface string) error {
+func createLinkUsingKernelModule(iface string, mtu int) error {
 	// link not created
 	wgLink := &netlink.GenericLink{
 		LinkAttrs: netlink.LinkAttrs{
 			Name: iface,
-			MTU:  MTU,
+			MTU:  mtu,
 		},
 		LinkType: "wireguard",
 	}
@@ -168,34 +194,40 @@ func createLinkUsingKernelModule(iface string) error {
 	return nil
 }
 
-// SyncLink creates the WireGuard link iface if it does not exist, using the kernel module
-// and falling back to the userspace implementation when the module is unavailable.
-func SyncLink(_ agent.State, iface string, wgUserspaceImplementationFallback string) error {
-	_, err := netlink.LinkByName(iface)
-	if err == nil {
-		return nil
-	}
-	if _, ok := errors.AsType[netlink.LinkNotFoundError](err); !ok {
-		return err
-	}
-
-	if kernelErr := createLinkUsingKernelModule(iface); kernelErr != nil {
-		// Keep both causes: a node with neither the module nor a usable
-		// userspace implementation should report why each failed.
-		if userspaceErr := createLinkUsingUserspaceImpl(iface, wgUserspaceImplementationFallback); userspaceErr != nil {
-			return errors.Join(kernelErr, userspaceErr)
-		}
-
-		// The userspace implementation creates the link asynchronously.
-		if err := waitForLink(iface, userspaceLinkTimeout); err != nil {
-			return err
-		}
-	}
-
-	// Verify link exists after creation
+// SyncLink makes the WireGuard link iface exist with MTU mtu and up. It creates a missing link with
+// the kernel module, falling back to the userspace implementation when the module is unavailable,
+// and sets the MTU and brings the link up whether it created the link or found it.
+func SyncLink(iface string, mtu int, wgUserspaceImplementationFallback string) error {
 	link, err := netlink.LinkByName(iface)
 	if err != nil {
-		return fmt.Errorf("expected link %q after creation, but not found: %w", iface, err)
+		if _, ok := errors.AsType[netlink.LinkNotFoundError](err); !ok {
+			return err
+		}
+
+		if kernelErr := createLinkUsingKernelModule(iface, mtu); kernelErr != nil {
+			// Keep both causes: a node with neither the module nor a usable
+			// userspace implementation should report why each failed.
+			if userspaceErr := createLinkUsingUserspaceImpl(iface, wgUserspaceImplementationFallback); userspaceErr != nil {
+				return errors.Join(kernelErr, userspaceErr)
+			}
+
+			// The userspace implementation creates the link asynchronously.
+			if err := waitForLink(iface, userspaceLinkTimeout); err != nil {
+				return err
+			}
+		}
+
+		// Verify link exists after creation
+		link, err = netlink.LinkByName(iface)
+		if err != nil {
+			return fmt.Errorf("expected link %q after creation, but not found: %w", iface, err)
+		}
+	}
+
+	if link.Attrs().MTU != mtu {
+		if err := netlink.LinkSetMTU(link, mtu); err != nil {
+			return fmt.Errorf("set link %q MTU to %d: %w", iface, mtu, err)
+		}
 	}
 	if err := netlink.LinkSetUp(link); err != nil {
 		return fmt.Errorf("bringing link %q up failed: %w", iface, err)
@@ -251,7 +283,7 @@ type Wireguard struct {
 func (wg *Wireguard) Sync(state agent.State) error {
 	wg.Logger.V(2).Info("syncing Wireguard")
 	// create wg0 link
-	err := SyncLink(state, wg.Iface, wg.WgUserspaceImplementationFallback)
+	err := SyncLink(wg.Iface, MTU, wg.WgUserspaceImplementationFallback)
 	if err != nil {
 		return err
 	}
@@ -262,12 +294,13 @@ func (wg *Wireguard) Sync(state agent.State) error {
 		return fmt.Errorf("failed to parse IPv4 CIDR %q: %w", cidr4, err)
 	}
 
-	addr4Net, gw4, err := gatewayIPFromPrefix(prefix4)
+	_, gw4, err := gatewayIPFromPrefix(prefix4)
 	if err != nil {
 		return err
 	}
 
-	if err := syncAddress(wg.Iface, addr4Net, syscall.AF_INET); err != nil {
+	addr, _ := netip.AddrFromSlice(gw4.To4())
+	if err := SyncAddress(wg.Iface, netip.PrefixFrom(addr, 32)); err != nil {
 		return err
 	}
 	if err := syncRoute(wg.Iface, cidr4, gw4, syscall.AF_INET); err != nil {
