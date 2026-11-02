@@ -13,7 +13,9 @@ import (
 	"github.com/jacaudi/wireguard-operator/internal/resources"
 )
 
-// ensureRouting replaces the two one-route tables and makes the two ip rules exactly the desired ones.
+// ensureRouting installs the peerCIDR route in table 51821 and the blackhole default in table 51822 with
+// RouteReplace (a route for an earlier peerCIDR is not removed), and makes the two ip rules exactly the
+// desired ones.
 func ensureRouting(p netip.Prefix) error {
 	wg, err := netlink.LinkByName(resources.WgInterface)
 	if err != nil {
