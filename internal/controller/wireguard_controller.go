@@ -86,11 +86,13 @@ type serverIdentity struct {
 	PublicKey string
 }
 
-// updateStatus records cond. A non-nil identity sets status.endpoint and status.publicKey in the
-// same write; nil leaves them as they are.
-func (r *WireguardReconciler) updateStatus(ctx context.Context, req ctrl.Request, cond metav1.Condition, identity *serverIdentity) error {
+// updateStatus records cond on the Wireguard wg names. wg is the object this reconcile fetched and
+// rendered: cond.ObservedGeneration is wg's generation, never that of the copy re-read here for a
+// fresh resourceVersion, so a spec patch that lands mid-reconcile cannot be reported as observed.
+// A non-nil identity sets status.endpoint and status.publicKey in the same write; nil leaves them.
+func (r *WireguardReconciler) updateStatus(ctx context.Context, wg *v1alpha1.Wireguard, cond metav1.Condition, identity *serverIdentity) error {
 	latest := &v1alpha1.Wireguard{}
-	if err := r.Get(ctx, req.NamespacedName, latest); err != nil {
+	if err := r.Get(ctx, client.ObjectKeyFromObject(wg), latest); err != nil {
 		if errors.IsNotFound(err) {
 			return nil
 		}
@@ -101,7 +103,7 @@ func (r *WireguardReconciler) updateStatus(ctx context.Context, req ctrl.Request
 	if cond.LastTransitionTime.IsZero() {
 		cond.LastTransitionTime = metav1.Now()
 	}
-	cond.ObservedGeneration = latest.GetGeneration()
+	cond.ObservedGeneration = wg.Generation
 
 	meta.SetStatusCondition(&latest.Status.Conditions, cond)
 
@@ -350,7 +352,7 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	log.Info("processing " + wireguard.Name)
 
 	if wireguard.Status.Status == "" {
-		err = r.updateStatus(ctx, req, metav1.Condition{Type: ConditionProgressing, Status: metav1.ConditionTrue, Reason: "FetchingStatus", Message: "Fetching Wireguard status"}, nil)
+		err = r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionProgressing, Status: metav1.ConditionTrue, Reason: "FetchingStatus", Message: "Fetching Wireguard status"}, nil)
 
 		if err != nil {
 			return ctrl.Result{}, err
@@ -362,7 +364,7 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// A peerCIDR the allocator cannot serve is permanent until the spec changes, and that edit
 	// triggers the next reconcile, so report it and return no error; only a failed status write is retried.
 	if err := validatePeerCIDR(effectivePeerCIDR4(wireguard)); err != nil {
-		return ctrl.Result{}, r.updateStatus(ctx, req, metav1.Condition{Type: ConditionDegraded, Status: metav1.ConditionTrue, Reason: "InvalidPeerCIDR", Message: err.Error()}, nil)
+		return ctrl.Result{}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionDegraded, Status: metav1.ConditionTrue, Reason: "InvalidPeerCIDR", Message: err.Error()}, nil)
 	}
 
 	// service
@@ -371,10 +373,10 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// the builder never renders it, so the operator never takes ownership of the allocation.
 	desiredSvc, err := r.serviceBuilder.ForWireguard(wireguard)
 	if err != nil {
-		return r.failDegraded(ctx, req, err, "ServiceBuildFailed", "Failed to build service")
+		return r.failDegraded(ctx, wireguard, err, "ServiceBuildFailed", "Failed to build service")
 	}
 	if err := r.applyOwned(ctx, desiredSvc); err != nil {
-		return r.failDegraded(ctx, req, err, "ServiceApplyFailed", "Failed to apply service")
+		return r.failDegraded(ctx, wireguard, err, "ServiceApplyFailed", "Failed to apply service")
 	}
 
 	// peers
@@ -487,14 +489,14 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// object, so every field the builder renders converges without a bespoke drift check.
 	desiredDep, err := r.deploymentBuilder.ForWireguard(wireguard)
 	if err != nil {
-		return r.failDegraded(ctx, req, err, "DeploymentBuildFailed", "Failed to build deployment")
+		return r.failDegraded(ctx, wireguard, err, "DeploymentBuildFailed", "Failed to build deployment")
 	}
 	if err := r.applyOwned(ctx, desiredDep); err != nil {
-		return r.failDegraded(ctx, req, err, "DeploymentApplyFailed", "Failed to apply deployment")
+		return r.failDegraded(ctx, wireguard, err, "DeploymentApplyFailed", "Failed to apply deployment")
 	}
 
 	// desiredSvc holds the apiserver's response to the apply, so it carries the assigned ClusterIP.
-	err = r.updateStatus(ctx, req, metav1.Condition{Type: ConditionReady, Status: metav1.ConditionTrue, Reason: "Active", Message: "VPN is active!"}, &serverIdentity{
+	err = r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionReady, Status: metav1.ConditionTrue, Reason: "Active", Message: "VPN is active!"}, &serverIdentity{
 		Endpoint:  net.JoinHostPort(desiredSvc.Spec.ClusterIP, strconv.Itoa(resources.WireguardPort)),
 		PublicKey: string(secret.Data["publicKey"]),
 	})

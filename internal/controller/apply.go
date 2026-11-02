@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jacaudi/wireguard-operator/api/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -102,12 +103,12 @@ func (r *WireguardReconciler) applyOwned(ctx context.Context, obj client.Object)
 // A failure to write the status is logged rather than combined into the returned error: the
 // caller needs the original error, and the status write is retried on the next reconcile.
 func (r *WireguardReconciler) failDegraded(
-	ctx context.Context, req ctrl.Request, err error, reason, msg string,
+	ctx context.Context, wg *v1alpha1.Wireguard, err error, reason, msg string,
 ) (ctrl.Result, error) {
 	log := ctrllog.FromContext(ctx)
 	log.Error(err, msg)
 
-	if serr := r.updateStatus(ctx, req, metav1.Condition{
+	if serr := r.updateStatus(ctx, wg, metav1.Condition{
 		Type:    ConditionDegraded,
 		Status:  metav1.ConditionTrue,
 		Reason:  reason,

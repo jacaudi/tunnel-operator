@@ -17,7 +17,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -208,8 +207,11 @@ var _ = Describe("applyOwned", func() {
 				ObjectMeta: metav1.ObjectMeta{Name: nn.Name + "-svc", Namespace: applyNS}})
 		}()
 
+		fetched := &v1alpha1.Wireguard{}
+		Expect(k8sClient.Get(context.Background(), nn, fetched)).Should(Succeed())
+
 		_, err := r.failDegraded(context.Background(),
-			ctrlRequestFor(nn), errProbe, "ProbeFailed", "probe failed")
+			fetched, errProbe, "ProbeFailed", "probe failed")
 		Expect(err).Should(MatchError(errProbe))
 
 		// Assert on the CONDITION, not on Status.Status.
@@ -227,7 +229,7 @@ var _ = Describe("applyOwned", func() {
 		// requeue does in production.
 		Eventually(func() bool {
 			_, _ = r.failDegraded(context.Background(),
-				ctrlRequestFor(nn), errProbe, "ProbeFailed", "probe failed")
+				fetched, errProbe, "ProbeFailed", "probe failed")
 
 			live := &v1alpha1.Wireguard{}
 			if err := k8sClient.Get(context.Background(), nn, live); err != nil {
@@ -246,7 +248,3 @@ var _ = Describe("applyOwned", func() {
 })
 
 var errProbe = stderrors.New("probe error")
-
-func ctrlRequestFor(nn types.NamespacedName) ctrl.Request {
-	return ctrl.Request{NamespacedName: nn}
-}

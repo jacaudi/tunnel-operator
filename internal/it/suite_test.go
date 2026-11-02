@@ -87,13 +87,12 @@ func waitForDeploymentTobeReady(name string, namespace string) {
 // (#45), then until its Deployment has rolled out.
 //
 // The CR's Ready condition is the only signal that the controller has seen a spec: the condition
-// records the generation of the object updateStatus last re-read, so Ready=True with an
+// records the generation of the object the reconcile rendered, so Ready=True with an
 // observedGeneration that has caught up with metadata.generation means the controller acted on this
 // spec. The Deployment's own generation cannot show that; it does not move until the controller
 // applies the change.
 //
-// The barrier is not exact. updateStatus stamps the generation of the object it re-reads, not the
-// generation the reconcile rendered, so a patch landing mid-reconcile can still race.
+// The controller stamps the generation of the object it rendered, so the barrier is exact.
 //
 // The condition type is the literal "Ready": this suite is an external client of the CRD's
 // condition contract and does not import internal/controller.
