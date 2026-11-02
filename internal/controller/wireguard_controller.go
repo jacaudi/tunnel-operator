@@ -110,11 +110,11 @@ func (r *WireguardReconciler) updateStatus(ctx context.Context, wg *v1alpha1.Wir
 
 	meta.SetStatusCondition(&latest.Status.Conditions, cond)
 
-	// Ready=True is written only once every apply in the reconcile has succeeded, so it also clears
-	// a Degraded left by an earlier failure. It must ride in this same write: a separate
-	// updateStatus call for Degraded would set the summary below to Error, and a second write that
-	// hits a Conflict is swallowed, so the clearing could be lost without trace.
-	if cond.Type == ConditionReady && cond.Status == metav1.ConditionTrue {
+	// A Ready condition, of either status, is written only once every apply in the reconcile has
+	// succeeded, so it also clears a Degraded left by an earlier failure. It must ride in this same
+	// write: a separate updateStatus call for Degraded would set the summary below to Error, and a
+	// second write that hits a Conflict is swallowed, so the clearing could be lost without trace.
+	if cond.Type == ConditionReady {
 		meta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{
 			Type:               ConditionDegraded,
 			Status:             metav1.ConditionFalse,
@@ -127,7 +127,10 @@ func (r *WireguardReconciler) updateStatus(ctx context.Context, wg *v1alpha1.Wir
 	// Backward-compatible summary fields derived from condition type
 	switch cond.Type {
 	case ConditionReady:
-		latest.Status.Status = v1alpha1.Ready
+		latest.Status.Status = v1alpha1.Pending
+		if cond.Status == metav1.ConditionTrue {
+			latest.Status.Status = v1alpha1.Ready
+		}
 	case ConditionDegraded:
 		latest.Status.Status = v1alpha1.Error
 	default:
@@ -561,16 +564,18 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// desiredSvc holds the apiserver's response to the apply, so it carries the assigned ClusterIP.
-	err = r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionReady, Status: metav1.ConditionTrue, Reason: "Active", Message: "VPN is active!"}, &serverIdentity{
+	identity := &serverIdentity{
 		Endpoint:  net.JoinHostPort(desiredSvc.Spec.ClusterIP, strconv.Itoa(resources.WireguardPort)),
 		PublicKey: string(secret.Data["publicKey"]),
-	})
-
-	if err != nil {
-		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{}, nil
+	// desiredDep holds the apiserver's response to the apply, so it carries the Deployment's current
+	// status. No requeue: Owns(&appsv1.Deployment{}) re-enqueues on every Deployment status change.
+	if msg := rolloutProblem(desiredDep); msg != "" {
+		return ctrl.Result{}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionReady, Status: metav1.ConditionFalse, Reason: ReasonDeploymentNotReady, Message: msg}, identity)
+	}
+
+	return ctrl.Result{}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionReady, Status: metav1.ConditionTrue, Reason: "Active", Message: "VPN is active!"}, identity)
 }
 
 // SetupWithManager sets up the controller with the Manager.

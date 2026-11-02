@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -390,6 +391,81 @@ var _ = Describe("wireguard controller", func() {
 				}
 				return meta.IsStatusConditionTrue(got.Status.Conditions, ConditionDegraded)
 			}, "2s", Interval).Should(BeFalse(), "the strategy migration must not leave the Wireguard Degraded")
+		})
+
+		It("reports DeploymentNotReady until the Deployment rolls out, then Ready", func() {
+			const name = "held"
+			key := types.NamespacedName{Name: name, Namespace: wgNamespace}
+			depKey := types.NamespacedName{Name: name + "-dep", Namespace: wgNamespace}
+
+			wg := &v1alpha1.Wireguard{
+				ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
+			}
+			Expect(k8sClient.Create(context.Background(), wg)).Should(Succeed())
+			// Ginkgo v1 allows no AfterEach inside an It.
+			defer func() {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(context.Background(), wg))).Should(Succeed())
+				Expect(client.IgnoreNotFound(k8sClient.Delete(context.Background(), &appsv1.Deployment{
+					ObjectMeta: metav1.ObjectMeta{Name: depKey.Name, Namespace: depKey.Namespace},
+				}))).Should(Succeed())
+			}()
+
+			ready := func(g Gomega) (cond *metav1.Condition, got *v1alpha1.Wireguard) {
+				got = &v1alpha1.Wireguard{}
+				g.Expect(k8sClient.Get(context.Background(), key, got)).Should(Succeed())
+				return meta.FindStatusCondition(got.Status.Conditions, ConditionReady), got
+			}
+
+			Eventually(func(g Gomega) {
+				cond, got := ready(g)
+				g.Expect(cond).ShouldNot(BeNil())
+				g.Expect(cond.Status).Should(Equal(metav1.ConditionFalse))
+				g.Expect(cond.Reason).Should(Equal(ReasonDeploymentNotReady))
+				g.Expect(cond.Message).Should(Equal("Deployment held-dep is not rolled out: generation 1 not yet observed"))
+				g.Expect(got.Status.Status).Should(Equal(v1alpha1.Pending))
+				g.Expect(got.Status.Endpoint).Should(HaveSuffix(":51820"))
+				g.Expect(got.Status.PublicKey).ShouldNot(BeEmpty())
+				degraded := meta.FindStatusCondition(got.Status.Conditions, ConditionDegraded)
+				g.Expect(degraded).ShouldNot(BeNil())
+				g.Expect(degraded.Status).Should(Equal(metav1.ConditionFalse))
+				g.Expect(degraded.Reason).Should(Equal("Reconciled"))
+			}, Timeout, Interval).Should(Succeed())
+
+			setStatus := func(mutate func(dep *appsv1.Deployment)) {
+				Expect(retry.RetryOnConflict(retry.DefaultRetry, func() error {
+					dep := &appsv1.Deployment{}
+					if err := k8sClient.Get(context.Background(), depKey, dep); err != nil {
+						return err
+					}
+					mutate(dep)
+					return k8sClient.Status().Update(context.Background(), dep)
+				})).Should(Succeed())
+			}
+
+			setStatus(func(dep *appsv1.Deployment) {
+				dep.Status.ObservedGeneration = dep.Generation
+				dep.Status.Replicas = 1
+				dep.Status.UpdatedReplicas = 1
+				dep.Status.ReadyReplicas = 0
+			})
+			Eventually(func(g Gomega) string {
+				cond, _ := ready(g)
+				g.Expect(cond).ShouldNot(BeNil())
+				return cond.Message
+			}, Timeout, Interval).Should(Equal("Deployment held-dep is not rolled out: 0/1 ready, 1/1 updated"))
+
+			setStatus(func(dep *appsv1.Deployment) {
+				dep.Status.ReadyReplicas = 1
+				dep.Status.AvailableReplicas = 1
+			})
+			Eventually(func(g Gomega) {
+				cond, got := ready(g)
+				g.Expect(cond).ShouldNot(BeNil())
+				g.Expect(cond.Status).Should(Equal(metav1.ConditionTrue))
+				g.Expect(cond.Reason).Should(Equal("Active"))
+				g.Expect(got.Status.Status).Should(Equal(v1alpha1.Ready))
+			}, Timeout, Interval).Should(Succeed())
 		})
 
 		It("allocates peer addresses from a custom PeerCIDR", func() {

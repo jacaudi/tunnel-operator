@@ -28,6 +28,7 @@ import (
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -97,6 +98,13 @@ var _ = BeforeSuite(func() {
 		AgentImagePullPolicy: "IfNotPresent",
 		AgentImage:           wgTestImage,
 	}).SetupWithManager(k8sManager)
+	Expect(err).ToNot(HaveOccurred())
+
+	// envtest runs no kube-controller-manager; fakeRollout reports the operator's Deployments rolled out.
+	err = ctrl.NewControllerManagedBy(k8sManager).
+		Named("fake-rollout").
+		For(&appsv1.Deployment{}).
+		Complete(&fakeRollout{Client: k8sManager.GetClient()})
 	Expect(err).ToNot(HaveOccurred())
 
 	go func() {
