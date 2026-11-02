@@ -213,6 +213,9 @@ var _ = BeforeSuite(func() {
 		Nodes: []v1alpha4.Node{
 			{
 				Role: v1alpha4.ControlPlaneRole,
+				// The client sidecar sets an owner reference to its pod; with this plugin on, the suite proves
+				// the client ClusterRole needs no pods/finalizers access.
+				KubeadmConfigPatches: []string{"kind: ClusterConfiguration\napiServer:\n  extraArgs:\n    enable-admission-plugins: NodeRestriction,OwnerReferencesPermissionEnforcement\n"},
 				ExtraPortMappings: []v1alpha4.PortMapping{
 					{
 						HostPort:      31820,
@@ -265,6 +268,7 @@ var _ = BeforeSuite(func() {
 		"role.rbac.authorization.k8s.io/wireguard-leader-election-role",
 		"clusterrole.rbac.authorization.k8s.io/wireguard-manager-role",
 		"clusterrole.rbac.authorization.k8s.io/wireguard-metrics-reader",
+		"clusterrole.rbac.authorization.k8s.io/wireguard-operator-client",
 		"rolebinding.rbac.authorization.k8s.io/wireguard-leader-election-rolebinding",
 		"clusterrolebinding.rbac.authorization.k8s.io/wireguard-manager-rolebinding",
 		"clusterrolebinding.rbac.authorization.k8s.io/wireguard-metrics-reader",
