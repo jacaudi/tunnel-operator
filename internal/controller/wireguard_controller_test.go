@@ -1546,9 +1546,10 @@ var _ = Describe("wireguard controller", func() {
 				}
 				return svc.Spec.ClusterIP
 			}
-			Eventually(clusterIP, Timeout, Interval).ShouldNot(BeEmpty())
+			var ip string
+			Eventually(func() string { ip = clusterIP(); return ip }, Timeout, Interval).ShouldNot(BeEmpty())
 
-			expectDegradedWithoutDeployment(key, "ClusterIPOutsideLocalCIDRs|Service vpn-cip-svc has ClusterIP "+clusterIP()+", which is in no localCIDRs entry; add the cluster's Service CIDR to localCIDRs")
+			expectDegradedWithoutDeployment(key, "ClusterIPOutsideLocalCIDRs|Service vpn-cip-svc has ClusterIP "+ip+", which is in no localCIDRs entry; add the cluster's Service CIDR to localCIDRs")
 		})
 
 		It("reports ReservedGluetunEnv for an env entry, and clears it once the entry is gone", func() {

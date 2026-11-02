@@ -5,6 +5,7 @@ package it
 
 import (
 	"fmt"
+	"strings"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -15,7 +16,7 @@ var _ = Describe("wireguard controller", func() {
 		// The fake exit node: a WireGuard peer for gluetun with a test address on its loopback behind http-echo.
 		output, err := KubectlApply(exitNodeManifests(), TestNamespace)
 		Expect(err).NotTo(HaveOccurred(), "apply the exit node: %s", output)
-		waitForDeploymentTobeReady("exit", TestNamespace, Timeout)
+		waitForDeploymentTobeReady("exit", TestNamespace, GatewayTimeout)
 
 		exitIP, err := KubectlGet("service/exit", TestNamespace, "{.spec.clusterIP}")
 		Expect(err).NotTo(HaveOccurred(), "kubectl get service/exit: %s", exitIP)
@@ -123,6 +124,59 @@ var _ = Describe("wireguard controller", func() {
 		Expect(err).NotTo(HaveOccurred(), "iptables-save in vpn-dep: %s", save)
 		line := leakCounterLine(save)
 		Expect(line).To(HavePrefix("[0:0] "), "leak counter: %q", line)
+
+		// The blackhole rule is what stops peer traffic when gluetun's tunnel rule (pref 101) is gone: with
+		// it removed, a wg0 packet falls through to the agent's pref-102 rule and the blackhole default.
+		routeGet := func() (string, error) {
+			return KubectlExec("deploy/vpn-dep", "agent", TestNamespace, "ip", "route", "get", exitAddress, "from", "10.8.0.2", "iif", "wg0")
+		}
+		restoreRule := func() (string, error) {
+			return KubectlExec("deploy/vpn-dep", "agent", TestNamespace, "ip", "rule", "add", "not", "fwmark", "51820", "lookup", "51820", "pref", "101")
+		}
+
+		// Positive control: with gluetun's rule in place the peer's packet routes into tun0.
+		route, err := routeGet()
+		Expect(err).NotTo(HaveOccurred(), "ip route get before deleting rule 101: %s", route)
+		Expect(route).To(ContainSubstring("dev tun0"))
+
+		// Restore rule 101 even when an assertion below fails. Ginkgo's Fail panics, so the deferred call
+		// runs; "File exists" means gluetun or the explicit restore below already put it back.
+		defer func() {
+			if restored, restoreErr := restoreRule(); restoreErr != nil && !strings.Contains(restored, "File exists") {
+				fmt.Fprintf(GinkgoWriter, "restore ip rule 101: %v: %s\n", restoreErr, restored)
+			}
+		}()
+		out, err = KubectlExec("deploy/vpn-dep", "agent", TestNamespace, "ip", "rule", "del", "pref", "101")
+		Expect(err).NotTo(HaveOccurred(), "delete gluetun's ip rule 101: %s", out)
+
+		// The kernel returns -EINVAL for a FIB result of RTN_BLACKHOLE, so ip prints "Invalid argument"
+		// and never the word "blackhole".
+		route, err = routeGet()
+		Expect(err).To(HaveOccurred(), "ip route get without rule 101 returned a route: %s", route)
+		Expect(route).To(ContainSubstring("Invalid argument"))
+		Expect(route).NotTo(ContainSubstring("dev eth0"))
+
+		// The packet itself is dropped, not rerouted.
+		body, err := fetch()
+		Expect(err).To(HaveOccurred(), "curl %s:%d from tpeer without rule 101 succeeded: %s", exitAddress, exitHTTPPort, body)
+		save, err = KubectlExec("deploy/vpn-dep", "agent", TestNamespace, "iptables-save", "-c", "-t", "mangle")
+		Expect(err).NotTo(HaveOccurred(), "iptables-save in vpn-dep: %s", save)
+		line = leakCounterLine(save)
+		Expect(line).To(HavePrefix("[0:0] "), "leak counter after deleting rule 101: %q", line)
+
+		// Restoring the rule restores the path.
+		out, err = restoreRule()
+		if err != nil {
+			Expect(out).To(ContainSubstring("File exists"), "restore ip rule 101")
+		}
+		Eventually(func(g Gomega) {
+			body, err := fetch()
+			g.Expect(err).NotTo(HaveOccurred(), "curl %s:%d from tpeer after restoring rule 101: %s", exitAddress, exitHTTPPort, body)
+			g.Expect(body).To(Equal("exit"))
+		}, GatewayTimeout, Interval).Should(Succeed())
+		route, err = routeGet()
+		Expect(err).NotTo(HaveOccurred(), "ip route get after restoring rule 101: %s", route)
+		Expect(route).To(ContainSubstring("dev tun0"))
 	})
 
 	It("exposes controller manager metrics", func() {
