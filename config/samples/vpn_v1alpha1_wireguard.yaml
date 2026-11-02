@@ -3,4 +3,14 @@ kind: Wireguard
 metadata:
   name: wireguard-sample
 spec:
-  # TODO(user): Add fields here
+  # The cluster's own networks. Clients route these over the CNI, never through the tunnel, and the
+  # Service's ClusterIP must fall inside one of them. Replace each placeholder with your cluster's.
+  localCIDRs:
+    - 10.244.0.0/16    # pod CIDR: replace with your cluster's pod CIDR
+    - 10.96.0.0/12     # Service CIDR: replace with your cluster's Service CIDR
+    - 192.168.0.0/24   # node CIDR: replace with the CIDR your nodes live in
+  gluetun:
+    # Provider credentials come from a Secret, never inline.
+    envFrom:
+      - secretRef:
+          name: vpn-provider

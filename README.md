@@ -3,8 +3,8 @@
 A Kubernetes operator that runs a WireGuard server inside your cluster and admits pods to it by
 public key, declaratively. It is the base of an in-cluster VPN gateway: application pods tunnel to
 the server, and the server egresses through [gluetun](https://github.com/qdm12/gluetun) to a
-commercial VPN provider. The server and peer registration work today; the gluetun egress and the
-in-pod client are designed, not yet implemented.
+commercial VPN provider. The server, peer registration and the gluetun egress work today; the in-pod
+client is designed, not yet implemented.
 
 This is a fork of [jodevsa/wireguard-operator](https://github.com/jodevsa/wireguard-operator) that
 trims it to an in-cluster gateway — no LoadBalancer or NodePort Service, no wstunnel, no IPv6, no
@@ -32,9 +32,8 @@ through a ClusterIP Service.
   server's `wg0`. The operator never sees the client's private key.
 - **Kernel or userspace WireGuard** — the agent uses the kernel module when the node has it and
   falls back to [wireguard-go](https://github.com/WireGuard/wireguard-go) when it does not.
-- **Egress through gluetun** *(designed, not yet implemented)* — the server pod forwards peer
-  traffic into a gluetun sidecar and fails closed when the tunnel drops. See
-  [docs/gluetun-egress.md](docs/gluetun-egress.md).
+- **Egress through gluetun** — the server pod forwards peer traffic into a gluetun container and
+  fails closed when the tunnel drops. See [docs/gluetun-egress.md](docs/gluetun-egress.md).
 - **Client sidecar** *(designed, not yet implemented)* — a native sidecar that mints a key inside
   the application pod, registers it, and routes the pod's internet traffic through the server.
   See [docs/client-sidecar.md](docs/client-sidecar.md).
@@ -43,7 +42,7 @@ See [`docs/architecture.md`](docs/architecture.md) for how the two resources fit
 
 ## At a glance
 
-How traffic flows from an application pod to the VPN provider; the client sidecar and the gluetun hop are not built yet:
+How traffic flows from an application pod to the VPN provider; the client sidecar is not built yet:
 
 ![Traffic flow: app pod with wg-client sidecar, ClusterIP Service, WireGuard server with gluetun, VPN provider, internet](docs/images/01-traffic-flow.svg)
 
@@ -85,8 +84,19 @@ apiVersion: vpn.wireguard-operator.io/v1alpha1
 kind: Wireguard
 metadata:
   name: vpn
-spec: {}
+spec:
+  localCIDRs:
+    - 10.244.0.0/16    # pod CIDR: replace with your cluster's pod CIDR
+    - 10.96.0.0/12     # Service CIDR: replace with your cluster's Service CIDR
+    - 192.168.0.0/24   # node CIDR: replace with the CIDR your nodes live in
+  gluetun:
+    envFrom:
+      - secretRef:
+          name: vpn-provider
 ```
+
+The Secret `vpn-provider` must exist and hold your provider's gluetun variables; the example file
+creates it with placeholders to replace.
 
 **3. Register a peer.** Each peer generates its own key and registers only the public half:
 
@@ -111,12 +121,12 @@ yourself with the values in
 **4. Check status.**
 
 ```sh
-kubectl get wireguard vpn                                         # STATUS: ready
+kubectl get wireguard vpn                                         # STATUS: ready once gluetun is connected to your provider
 kubectl get wireguardpeer peer1                                   # STATUS: ready
 kubectl get wireguardpeer peer1 -o jsonpath='{.status.address}'   # the peer's tunnel address
 ```
 
-Both read `ready` within a few reconciles. A peer without a `publicKey` stays `pending` with the
+The peer reads `ready` within a few reconciles, and the server once gluetun has connected. A peer without a `publicKey` stays `pending` with the
 `PublicKeyMissing` condition.
 
 ## How it works
@@ -161,7 +171,8 @@ Full docs live in [`docs/`](docs/):
 
 - [Installation](docs/installation.md) · [Architecture](docs/architecture.md)
 - [`Wireguard`](docs/crd-wireguard.md) · [`WireguardPeer`](docs/crd-wireguardpeer.md) references
-- [Gluetun egress](docs/gluetun-egress.md) · [Client sidecar](docs/client-sidecar.md) — designed, not yet implemented
+- [Gluetun egress](docs/gluetun-egress.md)
+- [Client sidecar](docs/client-sidecar.md) — designed, not yet implemented
 - [Upgrading from upstream](docs/upgrading-from-upstream.md) · [Examples](examples/)
 
 ## Acknowledgements

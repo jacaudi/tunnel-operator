@@ -31,39 +31,50 @@ nothing more than a public key and the addresses routed to it.
 ## Data path
 
 What works today: a client that holds a registered key reaches the server's `wg0` through the
-ClusterIP Service.
+ClusterIP Service, and the server forwards its traffic into a gluetun container in the same pod,
+which holds the tunnel to the provider.
 
 ```text
-client (your WireGuard config) ──UDP 51820──▶ <name>-svc (ClusterIP) ──▶ server pod: agent, wg0 10.8.0.1
+client (your WireGuard config) ──UDP 51820──▶ <name>-svc (ClusterIP) ──▶ server pod: agent wg0 10.8.0.1 ──▶ gluetun tun0 ──▶ VPN provider
 ```
 
-What is designed: the client becomes a sidecar in the application pod, and the server forwards
-peer traffic into a gluetun container in the same pod, which holds the tunnel to the provider.
+What is designed: the client becomes a sidecar in the application pod, which routes the pod's
+internet traffic into the server and keeps the cluster CIDRs on `eth0`.
 
 ```text
 app pod: app + wg-client sidecar ──wg──▶ server pod: agent wg0 ──▶ gluetun tun0 ──▶ VPN provider
           cluster CIDRs stay on eth0
 ```
 
-The sidecar and the gluetun hop are designed, not yet implemented — see
-[client-sidecar.md](client-sidecar.md) and [gluetun-egress.md](gluetun-egress.md).
+The sidecar is designed, not yet implemented — see [client-sidecar.md](client-sidecar.md). The
+gluetun hop is described in [gluetun-egress.md](gluetun-egress.md).
 
 ## The server pod
 
 - **`sysctl`** (init, privileged) — sets `net.ipv4.ip_forward=1` in the pod's network namespace.
 - **`agent`** (`NET_ADMIN`, read-only root filesystem) — creates `wg0` with the kernel module, or
   starts `wireguard-go` when the module is missing. It assigns the first host of `peerCIDR` to
-  `wg0`, routes `peerCIDR` to it, and listens on UDP `51820`.
+  `wg0`, routes `peerCIDR` to it, and listens on UDP `51820`. It also asserts the fail-closed
+  routing and the forwarding rules, and re-asserts them every 10 seconds.
+- **`gluetun`** (`NET_ADMIN`) — holds the tunnel to the VPN provider as `tun0`. It is configured
+  by `spec.gluetun`, shares the agent's network namespace, and has no probes of its own: the agent
+  polls its health server.
+- **Recreate, not rolling.** The Deployment's strategy is `Recreate`: one pod owns the key and the
+  tunnel, so the old pod is gone before the new one starts.
 - **State, not commands.** The manager never talks to the agent. It writes the desired state — the
-  server's private key, the server's name, namespace and spec, and, for each peer the server
+  server's private key, the server's name, namespace and spec (without `spec.gluetun`, so provider
+  credentials never reach a second Secret), and, for each peer the server
   admits (a valid key and an address), the peer's name, namespace, `publicKey`, `wireguardRef` and
   `status.address`, sorted by name — into the Secret's `state.json`, which the pod mounts. A peer
   with no key, an invalid key, an address conflict or no free address is left out. Other peer
   metadata (labels, annotations, resourceVersion, managedFields) and the rest of the status never
   reach the file, so writing them does not rewrite the Secret. The agent watches the file and
   diffs it against the live device, adding, updating and removing peers by public key.
-- **Readiness.** `GET /health` on port `8080` re-reads and re-applies the state; it fails when the
-  state is missing, invalid or cannot be applied.
+- **Readiness.** `GET /health` on port `8080` re-reads and re-applies the state. It fails when the
+  state is missing, invalid or cannot be applied, when the datapath has not been asserted, and when
+  gluetun's health server answers anything but `200`. The pod is ready only when `wg0` is synced,
+  the datapath is asserted and gluetun is healthy, and the `Wireguard` reports `Ready` only once
+  that pod has rolled out.
 
 ## Identity and addresses
 
@@ -80,16 +91,15 @@ The sidecar and the gluetun hop are designed, not yet implemented — see
 
 ## Failure behaviour
 
-Today the server terminates WireGuard and nothing more: it installs no NAT or firewall rules, so
-there is no egress for it to leak. The designed gateway fails closed by **routing** rather than by
-firewall rules alone:
+The gateway fails closed by **routing** rather than by firewall rules alone:
 
-- **Server side** — traffic arriving on `wg0` that has no route through gluetun's tunnel hits a
-  blackhole route instead of the pod's default route.
-- **Client side** — the sidecar replaces the pod's default route with `wg0` and keeps only the
-  cluster CIDRs on `eth0`, so a missing tunnel means no route to the internet, not a direct one.
-
-Both are designed, not yet implemented.
+- **Server side (implemented)** — traffic arriving on `wg0` that has no route through gluetun's
+  tunnel hits a blackhole route instead of the pod's default route, and peer traffic is
+  masqueraded into gluetun's tunnel, never out of `eth0`. See
+  [gluetun-egress.md](gluetun-egress.md#fail-closed-by-routing).
+- **Client side (designed, not yet implemented)** — the sidecar replaces the pod's default route
+  with `wg0` and keeps only the cluster CIDRs on `eth0`, so a missing tunnel means no route to the
+  internet, not a direct one.
 
 ## Out of scope
 

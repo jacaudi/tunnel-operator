@@ -24,6 +24,12 @@ fork serves pods inside it, so most of what was removed has no replacement.
 | `metric` | Nothing. The metrics exporter is gone. |
 | `status.address`, `status.dns`, `status.port`, `status.tunnel`, `status.uniqueIdentifier`, `status.resources` | Read the Service and Secret directly — see [crd-wireguard.md](crd-wireguard.md#owned-objects). |
 
+## Added to `Wireguard`
+
+`Wireguard` now requires `spec.localCIDRs` and `spec.gluetun`, so a `spec: {}` server must gain
+both before upgrading. See [crd-wireguard.md](crd-wireguard.md#spec) and
+[`examples/01-server.yaml`](../examples/01-server.yaml).
+
 ## Removed from `WireguardPeer`
 
 | Field | What to do instead |
@@ -41,8 +47,8 @@ fork serves pods inside it, so most of what was removed has no replacement.
   `<peer>-peer` key Secret per peer. This fork writes neither; build the client configuration
   yourself from [these values](client-sidecar.md#today-configure-the-client-yourself).
 - **Server iptables and NAT.** Upstream masqueraded peer traffic out of the server pod's `eth0`.
-  This fork installs no rules, so the server provides no internet egress until the gluetun
-  egress ships — see [gluetun-egress.md](gluetun-egress.md).
+  This fork masquerades peer traffic into gluetun's tunnel, never out of `eth0` — see
+  [gluetun-egress.md](gluetun-egress.md).
 - **Metrics.** The `<wireguard>-metrics-svc` Service and the agent's Prometheus exporter are gone.
 - **The `<wireguard>-config` ConfigMap.** It carried no data and is no longer rendered.
 - **The OLM bundle and the webhook server.** The bundle was never published, and the webhook

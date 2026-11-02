@@ -9,32 +9,57 @@ Source of truth: [`api/v1alpha1/wireguard_types.go`](../api/v1alpha1/wireguard_t
 
 ## Spec
 
-Every field is optional; `spec: {}` is a working server.
+`localCIDRs` and `gluetun` are required. Every other field is optional.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `peerCIDR` | string | `10.8.0.0/24` | IPv4 range peer addresses are allocated from. It must be a canonical IPv4 prefix (no host bits set) of `/30` or shorter; anything else sets `Degraded` with reason `InvalidPeerCIDR`. The server's `wg0` takes the first host (`10.8.0.1` by default); the network address and that host are never allocated to a peer. The default is applied by the operator when the field is empty; the field itself stays empty. |
+| `localCIDRs` | []string | — (**required**) | The cluster's pod, Service and node CIDRs, plus `169.254.20.10/32` when NodeLocal DNSCache is in use. At least one entry, each a canonical IPv4 CIDR; anything else sets `Degraded` with reason `InvalidLocalCIDRs`. Clients route these over the CNI and never through the tunnel, and the server hands them to gluetun as `FIREWALL_OUTBOUND_SUBNETS`. The Service's ClusterIP must fall inside one entry (`ClusterIPOutsideLocalCIDRs` otherwise), because a client routes everything outside `localCIDRs` into the tunnel, including the gateway's own Service. No entry may overlap `peerCIDR` (`PeerCIDROverlapsLocalCIDRs`), because peer addresses must lie outside the cluster's networks. The operator does **not** check that an entry avoids the provider's tunnel range; see [gluetun-egress.md](gluetun-egress.md#localcidrs). |
+| `gluetun.env` | []`EnvVar` | — | Passed through to the `gluetun` container, after the variables the operator renders. Setting a reserved variable (below) sets `Degraded` with reason `ReservedGluetunEnv`. |
+| `gluetun.envFrom` | []`EnvFromSource` | — | Passed through to the `gluetun` container. Reference provider credentials from a Secret here rather than writing them inline in `env`. A reserved variable among a referenced Secret's keys (with `prefix`, if set) sets `ReservedGluetunEnv`. A referenced ConfigMap is not checked, because the rendered value takes precedence. |
+| `gluetun.resources` | `ResourceRequirements` | — | Requests and limits for the `gluetun` container. |
 | `nodeSelector` | map[string]string | — | Copied to the server pod's `nodeSelector`. |
 | `tolerations` | []`Toleration` | — | Copied to the server pod's `tolerations`. |
 | `agent.resources` | `ResourceRequirements` | — | Requests and limits for the `agent` container. The `sysctl` init container gets none. |
+
+`gluetun` may be empty (`gluetun: {}`), but then gluetun has no provider configuration, so a useful
+gateway sets `envFrom` or `env`.
+
+### Reserved gluetun variables
+
+The operator renders these seven variables, in this order and before `gluetun.env`, because the
+server's routing depends on each value. They come from `ReservedGluetunEnv` in
+[`internal/resources/gluetun.go`](../internal/resources/gluetun.go).
+
+| Variable | Value | Why |
+|---|---|---|
+| `VPN_TYPE` | `wireguard` | The routing assumes gluetun's WireGuard-mode tables and marks. |
+| `VPN_INTERFACE` | `tun0` | Clearing it makes gluetun delete the agent's `wg0`. |
+| `FIREWALL_ENABLED_DISABLING_IT_SHOOTS_YOU_IN_YOUR_FOOT` | `on` | gluetun's own kill switch stays on. |
+| `FIREWALL_INPUT_PORTS` | `51820,8080` | gluetun drops inbound traffic by default; these are the WireGuard and health ports. |
+| `FIREWALL_OUTBOUND_SUBNETS` | `localCIDRs`, joined by commas | Lets the pod reach and answer cluster addresses over `eth0`. |
+| `HEALTH_SERVER_ADDRESS` | `127.0.0.1:9999` | The agent's `/health` polls it. |
+| `WIREGUARD_MTU` | `1320` | Pins the tunnel MTU. |
+
+Everything else is gluetun's own configuration; see [gluetun-egress.md](gluetun-egress.md).
 
 ## Status (operator-written)
 
 | Field | Description |
 |---|---|
-| `status` | Summary: `pending`, `ready` or `error`. Derived from the condition the operator wrote last — `Ready` → `ready`, `Degraded` → `error`, anything else → `pending`. |
+| `status` | Summary: `pending`, `ready` or `error`. Derived from the condition the operator wrote last — `Ready=True` → `ready`, `Ready=False` → `pending`, `Degraded` → `error`, anything else → `pending`. |
 | `message` | The message of the condition the operator wrote last, for example `VPN is active!`. |
-| `endpoint` | The address a client dials: the Service's ClusterIP and the WireGuard port, `<ClusterIP>:51820`. Written with `Ready=True`; keeps its last value while the server is `Degraded`. |
-| `publicKey` | The server's WireGuard public key. Written with `Ready=True`; keeps its last value while the server is `Degraded`. |
+| `endpoint` | The address a client dials: the Service's ClusterIP and the WireGuard port, `<ClusterIP>:51820`. Written with every `Ready` condition, `True` or `False`; keeps its last value while the server is `Degraded`. |
+| `publicKey` | The server's WireGuard public key. Written with every `Ready` condition, `True` or `False`; keeps its last value while the server is `Degraded`. |
 | `conditions` | Standard `metav1.Condition` list, keyed by `type`. See below. |
 
 ## Conditions
 
 | Type | Meaning |
 |---|---|
-| `Ready` | `True`, reason `Active`, once the Service, key Secret and Deployment are applied and every admissible peer was processed. A peer the pool cannot serve reports `AddressPoolExhausted` and does not hold the server back. It does **not** wait for the server pod to pass its readiness probe. |
+| `Ready` | `True`, reason `Active`, once the Service, key Secret and Deployment are applied, every admissible peer was processed, and the Deployment rendered from this generation has rolled out: its controller has observed the generation and one pod is updated and ready. That pod is ready only when `wg0` is synced, the datapath is asserted and gluetun reports healthy. `False`, reason `DeploymentNotReady`, until then, with a message such as `Deployment vpn-dep is not rolled out: 0/1 ready, 1/1 updated`. A peer the pool cannot serve reports `AddressPoolExhausted` and does not hold the server back. |
 | `Progressing` | `True`, reason `FetchingStatus`, written on the first reconcile of a new object. The operator does not set it back to `False` today. |
-| `Degraded` | `True` when `peerCIDR` is invalid, or when building or applying an owned object fails. Reasons: `InvalidPeerCIDR`, `ServiceBuildFailed`, `ServiceApplyFailed`, `DeploymentBuildFailed`, `DeploymentApplyFailed`; the message is the error. Set to `False`, reason `Reconciled`, in the same write that sets `Ready=True`. |
+| `Degraded` | `True` when the spec cannot be rendered, or when building or applying an owned object fails. Reasons: `InvalidPeerCIDR`, `InvalidLocalCIDRs`, `PeerCIDROverlapsLocalCIDRs`, `ClusterIPOutsideLocalCIDRs`, `ReservedGluetunEnv`, `ServiceBuildFailed`, `ServiceApplyFailed`, `DeploymentBuildFailed`, `DeploymentApplyFailed`; the message is the error. A spec problem is checked again every minute, so a fixed Secret clears `ReservedGluetunEnv` without a spec edit. Set to `False`, reason `Reconciled`, in any write of the `Ready` condition, `True` or `False`. |
 
 ## Owned objects
 
@@ -43,9 +68,9 @@ and are deleted with it.
 
 | Kind | Name | Contents |
 |---|---|---|
-| `Secret` | `<name>` | `privateKey` and `publicKey` (the server key pair), and `state.json` (the server and its admitted peers, those with a valid key and an address, read by the agent). |
+| `Secret` | `<name>` | `privateKey` and `publicKey` (the server key pair), and `state.json` (the server's name, namespace and spec **without `spec.gluetun`**, plus its admitted peers, those with a valid key and an address, read by the agent). `spec.gluetun` is dropped so that provider credentials never reach a second Secret. |
 | `Service` | `<name>-svc` | `ClusterIP`, one port `wireguard`, UDP `51820`. |
-| `Deployment` | `<name>-dep` | One replica. Init container `sysctl` (privileged, sets `net.ipv4.ip_forward=1`); container `agent` (`NET_ADMIN`, read-only root filesystem, UDP `51820`, readiness `GET /health` and liveness TCP on `8080`). Seccomp `RuntimeDefault`; no service-account token. |
+| `Deployment` | `<name>-dep` | One replica, strategy `Recreate`: the old pod is gone before the new one starts, because one pod owns the key and the tunnel. Init container `sysctl` (privileged, sets `net.ipv4.ip_forward=1`). Container `agent` (`NET_ADMIN`, read-only root filesystem, UDP `51820`, readiness `GET /health` with a 5 s timeout, liveness TCP on `8080`). Container `gluetun` (the pinned image `ghcr.io/qdm12/gluetun:v3.41.3@sha256:…`, `NET_ADMIN`, writable root filesystem, no probes of its own, and a `postStart` hook that deletes a stale `ip rule` for table `51820` so an abruptly restarted gluetun can start). Seccomp `RuntimeDefault`; no service-account token. |
 
 ## Lifecycle notes
 
@@ -65,6 +90,8 @@ and are deleted with it.
 - **Server-Side Apply.** The operator applies the Service and Deployment as field manager
   `wireguard-operator`. Fields it renders converge on every reconcile; fields it does not render,
   such as the Service's allocated `clusterIP`, are left alone.
-- **No internet egress yet.** The server pod enables IP forwarding but installs no NAT or
-  firewall rules. Egress through gluetun is designed, not yet implemented — see
-  [gluetun-egress.md](gluetun-egress.md).
+- **Egress goes through gluetun, and fails closed.** Peer traffic leaves the pod only through
+  gluetun's tunnel; see [gluetun-egress.md](gluetun-egress.md).
+- **A referenced Secret that does not exist is not a spec error.** The reserved-variable check
+  skips it, and the kubelet reports the missing Secret on the pod, so the `Wireguard` reads
+  `Ready=False` until the Secret exists.
