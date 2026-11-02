@@ -1,46 +1,104 @@
 # Egress through gluetun
 
-> **Status: designed, not yet implemented.** The server pod runs WireGuard only; traffic is **not**
-> yet forwarded through gluetun, and the `Wireguard` CRD has no `gluetun` or `localCIDRs` field.
-> This page describes the intended design so the data path is clear; do not rely on it for privacy
-> yet. Tracked in [#3](https://github.com/jacaudi/wireguard-operator/issues/3).
+The server pod runs a [gluetun](https://github.com/qdm12/gluetun) container beside the agent. The
+two share one network namespace, so peer traffic arriving on `wg0` is forwarded into gluetun's
+`tun0` and on to your VPN provider. Peer traffic never leaves the pod any other way: with the tunnel
+down it is dropped, not sent out of `eth0`.
 
-## Today: the server terminates WireGuard and stops there
+> **The in-pod client is not built yet.** The server side described here works, but nothing
+> creates the client end for you. Today only a peer you configure by hand can use the gateway; see
+> [client-sidecar.md](client-sidecar.md). Tracked in
+> [#32](https://github.com/jacaudi/wireguard-operator/issues/32).
 
-The server pod enables IPv4 forwarding but installs no NAT, firewall or policy-routing rules. Peer
-traffic bound for the internet is not masqueraded and has no supported exit. Use the server for
-peer-to-server traffic only.
+See [`examples/01-server.yaml`](../examples/01-server.yaml) for a `Wireguard` with its provider
+Secret.
 
-## Planned: a gluetun sidecar in the server pod
+## Configuration
 
-The server pod gains a [gluetun](https://github.com/qdm12/gluetun) container. The agent and
-gluetun share one network namespace, so peer traffic arriving on `wg0` is forwarded into
-gluetun's `tun0` and on to the provider.
+`spec.gluetun` is passed through to the `gluetun` container. There is no typed provider schema:
+gluetun's own [environment variables](https://github.com/qdm12/gluetun-wiki) are the contract, so
+every provider gluetun supports works.
 
-- **Configuration is gluetun's own.** A new `spec.gluetun` passes environment variables through to
-  the container, with provider credentials referenced from a Secret by `envFrom`, never written
-  inline. There is no typed provider schema: gluetun's variables are the contract.
-- **The operator owns the variables the routing depends on.** It renders `VPN_TYPE`,
-  `VPN_INTERFACE`, the firewall inputs and outbound subnets, the health-server address and the
-  tunnel MTU itself, and reports `Degraded` if you set any of them.
-- **Cluster traffic stays in the cluster.** A new required `spec.localCIDRs` lists the pod, Service
-  and node CIDRs. Clients route those over the CNI, and gluetun allows them as outbound subnets.
+- **`gluetun.envFrom`** — reference a Secret that holds the provider credentials, for example
+  `VPN_SERVICE_PROVIDER` and `WIREGUARD_PRIVATE_KEY`. Credentials are never written inline in the
+  `Wireguard`, and they never reach the operator's own `state.json` Secret: the operator drops
+  `spec.gluetun` from it.
+- **`gluetun.env`** — any other gluetun variable, rendered after the operator's own.
+- **`gluetun.resources`** — requests and limits for the container.
 
-## Planned: fail closed by routing
+The operator owns the variables the routing depends on. It renders `VPN_TYPE`, `VPN_INTERFACE`, the
+firewall settings, `HEALTH_SERVER_ADDRESS` and `WIREGUARD_MTU` itself (the full table is in
+[crd-wireguard.md](crd-wireguard.md#reserved-gluetun-variables)). If `env`, or the keys of a Secret
+that `envFrom` references, set any of them, the `Wireguard` is `Degraded` with reason
+`ReservedGluetunEnv` and no Deployment is rendered. A referenced ConfigMap is not checked, because
+the operator's value takes precedence.
 
-Two policy-routing rules and two one-route tables carry the safety property:
+## `localCIDRs`
 
-- traffic for `peerCIDR` returns to `wg0`;
-- anything else that arrived on `wg0` and is not routed by gluetun's tunnel table hits a blackhole
-  route.
+`spec.localCIDRs` is required: list the cluster's pod, Service and node CIDRs, and
+`169.254.20.10/32` if you use NodeLocal DNSCache. Cluster traffic stays in the cluster:
 
-With the tunnel down, gluetun crashed, or gluetun's firewall rolled back, peer traffic is dropped;
-the pod's own default route is never reachable from `wg0`. A small set of iptables rules — forward
-`wg0` to `tun0`, masquerade, clamp MSS — handles availability and is re-asserted every few
-seconds, so a gluetun restart costs an outage, not a leak.
+- Clients route these ranges over the CNI, never through the tunnel.
+- The server hands them to gluetun as `FIREWALL_OUTBOUND_SUBNETS`, so gluetun lets the pod answer
+  cluster addresses over `eth0`.
 
-## Planned: readiness follows the tunnel
+The operator checks that each entry is a canonical IPv4 CIDR, that the Service's ClusterIP falls
+inside one (clients route everything outside `localCIDRs` into the tunnel, including the gateway's
+own Service), and that none overlaps `peerCIDR`. It does **not** check that `localCIDRs` avoids the
+provider's tunnel range. An entry that overlaps it keeps that traffic off the tunnel, so keep your
+`localCIDRs` outside the range your provider uses; gluetun's firewall documentation says the same of
+`FIREWALL_OUTBOUND_SUBNETS`.
 
-The agent's `/health` also polls gluetun's health server. An unhealthy tunnel makes the server pod
-not ready, the Service drops its only endpoint, and clients stop handshaking. The `Wireguard`
-reports `Ready=False` while its Deployment is not ready.
+## Fail closed by routing
+
+The safety property comes from policy routing, not from firewall rules. The agent installs two
+`ip rule`s and two one-route tables. This is the lookup order for a packet that arrives on `wg0`
+bound for the internet:
+
+```text
+pref  90   to <peerCIDR>        lookup 51821   # agent: table 51821 = <peerCIDR> dev wg0 (the return path)
+pref  98-101                                   # gluetun: its own rules, ending in the tunnel table
+pref 102   iif wg0              lookup 51822   # agent: table 51822 = blackhole default route
+          main                                 # never reached for traffic that arrived on wg0
+```
+
+- **Rule 90** sends traffic for `peerCIDR` back to `wg0`, so the provider's replies to a peer reach
+  `wg0` instead of re-entering `tun0`.
+- **Rules 98 to 101** are gluetun's. Rules 98 to 100 keep local, outbound-subnet and inbound
+  traffic on `eth0`; rule 101 routes everything else into `tun0` while the tunnel is up.
+- **Rule 102** catches whatever gluetun's rules did not route and blackholes it. This is the
+  fail-closed rule: the pod's main-table default route through `eth0` is unreachable for peer
+  traffic whatever happens to iptables.
+
+If gluetun's tunnel table has no route, or gluetun's firewall rolls back, peer traffic is dropped.
+
+## The iptables rules
+
+iptables rules handle availability: they let the traffic that routing allows actually flow. gluetun
+sets the `FORWARD` policy to `DROP` and adds no accepts of its own, so the agent asserts:
+
+```text
+-P FORWARD DROP
+filter  -A FORWARD -i wg0 -o tun0 -s <peerCIDR> -j ACCEPT
+filter  -A FORWARD -i tun0 -o wg0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+mangle  -A FORWARD -o tun0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+nat     -A POSTROUTING -s <peerCIDR> -o tun0 -j MASQUERADE
+```
+
+Peer traffic is masqueraded into gluetun's tunnel, never out of `eth0`. The agent re-asserts the
+routing and these rules after every state change and every 10 seconds, adding only a rule whose
+check fails, so a rule is never duplicated. When gluetun restarts it can flush its firewall, and the
+rules come back within one interval. During that window the blackhole rule drops peer traffic, so a
+gluetun restart costs an outage, not a leak.
+
+## Readiness follows the tunnel
+
+The agent's `/health` is the pod's readiness probe. It succeeds only when the desired state is
+valid, `wg0` is synced to it, the datapath above has been asserted, and gluetun's health server on
+`127.0.0.1:9999` answers `200`. An unhealthy tunnel makes the server pod not ready, the Service
+drops its only endpoint, and clients stop handshaking.
+
+The `Wireguard` follows the pod: `Ready` is `False` with reason `DeploymentNotReady` until the
+Deployment rendered from the current spec has rolled out, and `True` only then. A new gateway
+therefore reads `pending` until gluetun has connected to your provider. See
+[crd-wireguard.md](crd-wireguard.md#conditions).

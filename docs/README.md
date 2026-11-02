@@ -11,7 +11,7 @@ New here? Start with the [Quick start in the root README](../README.md#quick-sta
 | [Architecture](architecture.md) | The two-resource model, the server pod, identity and addresses, what is out of scope |
 | [`Wireguard` reference](crd-wireguard.md) | Server CRD: spec, status, conditions, owned objects, lifecycle |
 | [`WireguardPeer` reference](crd-wireguardpeer.md) | Peer CRD: spec, status, conditions, lifecycle |
-| [Gluetun egress](gluetun-egress.md) | Server egress through a gluetun sidecar — **designed, not yet implemented** |
+| [Gluetun egress](gluetun-egress.md) | Server egress through a gluetun container: configuration, `localCIDRs`, fail-closed routing, readiness |
 | [Client sidecar](client-sidecar.md) | In-pod WireGuard client — **designed, not yet implemented** |
 | [Upgrading from upstream](upgrading-from-upstream.md) | What this fork removed from jodevsa/wireguard-operator and what to do instead |
 | [Examples](../examples/) | Runnable sample manifests |
@@ -24,11 +24,12 @@ New here? Start with the [Quick start in the root README](../README.md#quick-sta
   `PublicKeyMissing`/`InvalidPublicKey` reporting, address dedupe.
 - **Agent** — kernel WireGuard with a wireguard-go fallback; adds, updates and removes peers by
   public key as `state.json` changes; `/health` readiness.
+- **Egress through gluetun** — the server pod runs a gluetun container, forwards peer traffic into
+  its tunnel and fails closed by routing; `Ready` waits for gluetun to be healthy. See
+  [gluetun-egress.md](gluetun-egress.md).
 
 ## Not yet implemented (designed)
 
-- **Egress through gluetun** — see [gluetun-egress.md](gluetun-egress.md). Tracked in
-  [#3](https://github.com/jacaudi/wireguard-operator/issues/3).
 - **Client sidecar** — see [client-sidecar.md](client-sidecar.md). Tracked in
   [#32](https://github.com/jacaudi/wireguard-operator/issues/32).
 - **OCI Helm chart** — see [installation.md](installation.md#install-with-helm-oci). Tracked in

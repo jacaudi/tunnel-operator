@@ -7,7 +7,7 @@ Two manifests: a server and one peer of it. Pair them with the reference docs:
 
 | File | What it shows |
 |---|---|
-| [`01-server.yaml`](01-server.yaml) | `Wireguard` named `vpn` with `spec: {}` — every default: `peerCIDR` `10.8.0.0/24`, ClusterIP Service on UDP `51820` |
+| [`01-server.yaml`](01-server.yaml) | `Wireguard` named `vpn` with the required `localCIDRs` (pod, Service and node placeholders) and `gluetun.envFrom` a Secret, plus that `vpn-provider` Secret with placeholder gluetun variables for a WireGuard provider; the defaults apply otherwise (`peerCIDR` `10.8.0.0/24`, ClusterIP Service on UDP `51820`) |
 | [`02-peer.yaml`](02-peer.yaml) | `WireguardPeer` that references `vpn` and registers a client's public key; the operator fills in `status.address` |
 
 ## Reading order
@@ -27,6 +27,7 @@ reads `pending` (`Waiting for wireguard resource 'vpn' to be created`) until the
 > `wg genkey | wg pubkey` from the client that will connect; the operator never holds the private
 > half.
 
-> **Egress:** these examples give a peer a tunnel to the server pod and nothing more. Egress
-> through gluetun is designed but not yet implemented (see
-> [../docs/gluetun-egress.md](../docs/gluetun-egress.md)).
+> **Egress:** egress through gluetun works once you fill in the provider Secret in
+> `01-server.yaml` (see [../docs/gluetun-egress.md](../docs/gluetun-egress.md)). The server reads
+> `ready` only when gluetun has connected. The in-pod client is not built yet, so a peer needs a
+> hand-configured client to use it.

@@ -31,8 +31,8 @@ AllowedIPs = 10.8.0.1/32
 PersistentKeepalive = 25
 ```
 
-`AllowedIPs = 0.0.0.0/0` gains you nothing yet: the server has no internet egress (see
-[gluetun-egress.md](gluetun-egress.md)).
+The server now egresses through gluetun, so `AllowedIPs = 0.0.0.0/0` sends a client's internet
+traffic through the provider (see [gluetun-egress.md](gluetun-egress.md)).
 
 ## Planned: a native sidecar that registers itself
 
