@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"strconv"
 	"time"
@@ -307,6 +308,28 @@ func (r *WireguardReconciler) markPeersWireguardNotFound(ctx context.Context, re
 	return nil
 }
 
+// applyDeployment applies dep after clearing a defaulted spec.strategy.rollingUpdate from the live
+// Deployment. The apiserver defaults that block for a RollingUpdate Deployment and no field manager
+// owns it, so Server-Side Apply of strategy Recreate cannot prune it and validation rejects the apply
+// ("may not be specified when strategy `type` is 'Recreate'"). The merge patch runs once per such
+// Deployment; a missing Deployment needs none.
+func (r *WireguardReconciler) applyDeployment(ctx context.Context, dep *appsv1.Deployment) error {
+	key := client.ObjectKeyFromObject(dep)
+	live := &appsv1.Deployment{}
+	switch err := r.Get(ctx, key, live); {
+	case errors.IsNotFound(err):
+		// Nothing to migrate: the apply creates the Deployment.
+	case err != nil:
+		return fmt.Errorf("read Deployment %s for the strategy migration: %w", key, err)
+	case live.Spec.Strategy.RollingUpdate != nil:
+		patch := client.RawPatch(types.MergePatchType, []byte(`{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}`))
+		if err := r.Patch(ctx, live, patch); err != nil {
+			return fmt.Errorf("clear rollingUpdate on Deployment %s: %w", key, err)
+		}
+	}
+	return r.applyOwned(ctx, dep)
+}
+
 //+kubebuilder:rbac:groups=vpn.wireguard-operator.io,resources=wireguards,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=vpn.wireguard-operator.io,resources=wireguards/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=vpn.wireguard-operator.io,resources=wireguards/finalizers,verbs=update
@@ -491,7 +514,7 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if err != nil {
 		return r.failDegraded(ctx, wireguard, err, "DeploymentBuildFailed", "Failed to build deployment")
 	}
-	if err := r.applyOwned(ctx, desiredDep); err != nil {
+	if err := r.applyDeployment(ctx, desiredDep); err != nil {
 		return r.failDegraded(ctx, wireguard, err, "DeploymentApplyFailed", "Failed to apply deployment")
 	}
 

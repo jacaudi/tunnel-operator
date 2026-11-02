@@ -66,6 +66,9 @@ func (b *DeploymentBuilder) ForWireguard(wg *v1alpha1.Wireguard) (*appsv1.Deploy
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
+			// One replica owns the WireGuard key and the tunnel, so the old pod must be gone before the
+			// new one starts.
+			Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 			Selector: &metav1.LabelSelector{
 				MatchLabels: ls,
 			},
@@ -101,6 +104,7 @@ func (b *DeploymentBuilder) ForWireguard(wg *v1alpha1.Wireguard) (*appsv1.Deploy
 					InitContainers: []corev1.Container{b.ipForwardInitContainer()},
 					Containers: []corev1.Container{
 						b.agentContainer(wg, readOnlyRootFilesystem, allowPrivilegeEscalation),
+						b.gluetunContainer(wg),
 					},
 				},
 			},
@@ -128,7 +132,7 @@ func (b *DeploymentBuilder) agentContainer(wg *v1alpha1.Wireguard, readOnlyRootF
 		Command: []string{
 			"agent",
 			"--v", "11",
-			"--wg-iface", "wg0",
+			"--wg-iface", WgInterface,
 			"--wg-listen-port", fmt.Sprintf("%d", WireguardPort),
 			"--state", "/tmp/wireguard/state.json",
 			"--wg-userspace-implementation-fallback", "wireguard-go",
@@ -146,6 +150,8 @@ func (b *DeploymentBuilder) agentContainer(wg *v1alpha1.Wireguard, readOnlyRootF
 			},
 		},
 		ReadinessProbe: &corev1.Probe{
+			// /health syncs wg0 and polls gluetun's health server; the 1 s default is too short for both.
+			TimeoutSeconds: 5,
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
 					Port: intstr.FromInt32(HTTPPort),
@@ -172,6 +178,32 @@ func (b *DeploymentBuilder) agentContainer(wg *v1alpha1.Wireguard, readOnlyRootF
 			},
 		},
 		Resources: wg.Spec.Agent.Resources,
+	}
+}
+
+// gluetunContainer creates the gluetun container, which gives the pod its tunnel to the VPN provider.
+// It shares the agent's network namespace.
+func (b *DeploymentBuilder) gluetunContainer(wg *v1alpha1.Wireguard) corev1.Container {
+	return corev1.Container{
+		Name:  "gluetun",
+		Image: GluetunImage,
+		// gluetun writes /gluetun and /tmp, so the root filesystem stays writable.
+		SecurityContext: &corev1.SecurityContext{
+			Capabilities: &corev1.Capabilities{Add: []corev1.Capability{"NET_ADMIN"}},
+		},
+		Env:       append(ReservedGluetunEnv(wg.Spec.LocalCIDRs), wg.Spec.Gluetun.Env...),
+		EnvFrom:   wg.Spec.Gluetun.EnvFrom,
+		Resources: wg.Spec.Gluetun.Resources,
+		Lifecycle: &corev1.Lifecycle{
+			PostStart: &corev1.LifecycleHandler{
+				Exec: &corev1.ExecAction{
+					Command: []string{
+						"/bin/sh", "-c",
+						fmt.Sprintf("(ip rule del table %d; ip -6 rule del table %d) || true", gluetunRuleTable, gluetunRuleTable),
+					},
+				},
+			},
+		},
 	}
 }
 

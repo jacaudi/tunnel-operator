@@ -276,8 +276,13 @@ var _ = Describe("wireguard controller", func() {
 				}
 				deployment := &appsv1.Deployment{}
 				Expect(k8sClient.Get(context.Background(), deploymentKey, deployment)).Should(Succeed())
-				Expect(len(deployment.Spec.Template.Spec.Containers)).Should(Equal(1))
-				return deployment.Spec.Template.Spec.Containers[0].Image
+				Expect(len(deployment.Spec.Template.Spec.Containers)).Should(Equal(2))
+				for _, c := range deployment.Spec.Template.Spec.Containers {
+					if c.Name == "agent" {
+						return c.Image
+					}
+				}
+				return "no agent container"
 			}, Timeout, Interval).Should(Equal(wgTestImage))
 
 			// create peer
@@ -330,6 +335,61 @@ var _ = Describe("wireguard controller", func() {
 				return k8sClient.Get(context.Background(), wgSecretKeyName, wgSecret)
 			}, Timeout, Interval).Should(Succeed())
 
+		})
+
+		It("switches a server Deployment left on RollingUpdate to Recreate", func() {
+			const name = "vpn-rollover"
+			key := types.NamespacedName{Name: name, Namespace: wgNamespace}
+			depKey := types.NamespacedName{Name: name + "-dep", Namespace: wgNamespace}
+			ls := resources.LabelsForWireguard(name)
+
+			// Seed the Deployment an earlier operator left behind BEFORE the Wireguard exists. It has
+			// no strategy, so the apiserver defaults RollingUpdate and its rollingUpdate block.
+			legacy := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{Name: depKey.Name, Namespace: depKey.Namespace},
+				Spec: appsv1.DeploymentSpec{
+					Selector: &metav1.LabelSelector{MatchLabels: ls},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{Labels: ls},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{{Name: "agent", Image: wgTestImage}},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(context.Background(), legacy)).Should(Succeed())
+			defer func() {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(context.Background(), legacy))).Should(Succeed())
+			}()
+			Expect(legacy.Spec.Strategy.RollingUpdate).ShouldNot(BeNil(),
+				"precondition: the apiserver defaults a RollingUpdate block")
+
+			wg := &v1alpha1.Wireguard{
+				ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
+			}
+			Expect(k8sClient.Create(context.Background(), wg)).Should(Succeed())
+			defer func() {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(context.Background(), wg))).Should(Succeed())
+			}()
+
+			dep := &appsv1.Deployment{}
+			Eventually(func() string {
+				if err := k8sClient.Get(context.Background(), depKey, dep); err != nil {
+					return "get-failed"
+				}
+				return string(dep.Spec.Strategy.Type)
+			}, Timeout, Interval).Should(Equal("Recreate"))
+			Expect(dep.Spec.Strategy.RollingUpdate).Should(BeNil())
+			Expect(dep.Spec.Template.Spec.Containers).Should(HaveLen(2))
+
+			Consistently(func() bool {
+				got := &v1alpha1.Wireguard{}
+				if err := k8sClient.Get(context.Background(), key, got); err != nil {
+					return true
+				}
+				return meta.IsStatusConditionTrue(got.Status.Conditions, ConditionDegraded)
+			}, "2s", Interval).Should(BeFalse(), "the strategy migration must not leave the Wireguard Degraded")
 		})
 
 		It("allocates peer addresses from a custom PeerCIDR", func() {
