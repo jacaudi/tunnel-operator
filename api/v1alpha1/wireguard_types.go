@@ -32,7 +32,15 @@ const (
 type WireguardSpec struct {
 	// PeerCIDR is the IPv4 CIDR range from which Wireguard peer addresses will be allocated.
 	// If omitted, the operator will default to 10.8.0.0/24.
-	PeerCIDR     string            `json:"peerCIDR,omitempty"`
+	PeerCIDR string `json:"peerCIDR,omitempty"`
+	// LocalCIDRs lists the cluster's pod, Service and node CIDRs, plus 169.254.20.10/32 when NodeLocal
+	// DNSCache is in use. Clients route these over the CNI, never through the tunnel, and the server
+	// hands them to gluetun as FIREWALL_OUTBOUND_SUBNETS. Each entry must be a canonical IPv4 CIDR;
+	// the Service's ClusterIP must fall inside one, and none may overlap peerCIDR.
+	// +kubebuilder:validation:MinItems=1
+	LocalCIDRs []string `json:"localCIDRs"`
+	// Gluetun configures the gluetun container that carries the server's egress to the VPN provider.
+	Gluetun      GluetunSpec       `json:"gluetun"`
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 	// A list of Kubernetes taint tolerations applied to the Wireguard pod.
 	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
@@ -41,6 +49,22 @@ type WireguardSpec struct {
 
 // WireguardPodSpec defines spec for respective containers created for Wireguard
 type WireguardPodSpec struct {
+	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// GluetunSpec is passed through to the gluetun container. The operator renders the variables its
+// routing depends on (VPN_TYPE, VPN_INTERFACE, the firewall settings, HEALTH_SERVER_ADDRESS and
+// WIREGUARD_MTU) and reports Degraded if env or a referenced Secret sets one of them.
+type GluetunSpec struct {
+	// Env is passed through to the gluetun container, after the variables the operator renders.
+	// +optional
+	Env []corev1.EnvVar `json:"env,omitempty"`
+	// EnvFrom is passed through to the gluetun container. Reference provider credentials from a
+	// Secret here rather than writing them inline in env.
+	// +optional
+	EnvFrom []corev1.EnvFromSource `json:"envFrom,omitempty"`
+	// Resources are the gluetun container's requests and limits.
+	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 

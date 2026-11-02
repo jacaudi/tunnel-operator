@@ -194,7 +194,10 @@ var _ = Describe("applyOwned", func() {
 		r := newTestReconciler()
 
 		nn := types.NamespacedName{Name: "apply-degraded", Namespace: applyNS}
-		wg := &v1alpha1.Wireguard{ObjectMeta: metav1.ObjectMeta{Name: nn.Name, Namespace: nn.Namespace}}
+		wg := &v1alpha1.Wireguard{
+			ObjectMeta: metav1.ObjectMeta{Name: nn.Name, Namespace: nn.Namespace},
+			Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
+		}
 		Expect(k8sClient.Create(context.Background(), wg)).Should(Succeed())
 		defer func() {
 			// The manager reconciles this object, so it also creates children. Clean them up:

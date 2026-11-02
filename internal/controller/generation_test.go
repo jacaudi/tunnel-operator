@@ -99,7 +99,9 @@ var _ = Describe("status generation stamp", func() {
 	It("stamps the generation the reconcile rendered, not the one it re-read", func() {
 		ctx := context.Background()
 		Expect(k8sClient.Create(ctx, &v1alpha1.Wireguard{
-			ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}})).To(Succeed())
+			ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+			Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
+		})).To(Succeed())
 
 		// The manager's controller has fully reconciled it once.
 		Eventually(func() string {

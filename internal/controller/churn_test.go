@@ -116,6 +116,7 @@ var _ = Describe("no update churn", func() {
 
 		wg := &v1alpha1.Wireguard{
 			ObjectMeta: metav1.ObjectMeta{Name: churnName, Namespace: churnNS},
+			Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
 		}
 		Expect(k8sClient.Create(context.Background(), wg)).Should(Succeed())
 		defer func() {

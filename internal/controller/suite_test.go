@@ -45,6 +45,10 @@ var writeCounter *countingClient
 var testEnv *envtest.Environment
 var wgTestImage = "test-image"
 
+// testLocalCIDRs is a valid spec.localCIDRs for envtest: its apiserver allocates ClusterIPs from
+// 10.0.0.0/24 (controller-runtime's envtest default), and the range overlaps no peerCIDR a spec uses.
+var testLocalCIDRs = []string{"10.0.0.0/24"}
+
 func TestAPIs(t *testing.T) {
 	RegisterFailHandler(Fail)
 
