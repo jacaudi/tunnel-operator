@@ -2,6 +2,8 @@ package wireguard
 
 import (
 	"net"
+	"net/netip"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -83,6 +85,40 @@ func TestAllowedIPsEqual(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := allowedIPsEqual(mustNets(t, tt.a...), mustNets(t, tt.b...)); got != tt.want {
 				t.Errorf("allowedIPsEqual(%v, %v) = %v, want %v", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAddressChanges(t *testing.T) {
+	p := netip.MustParsePrefix
+	tests := []struct {
+		name       string
+		have       []netip.Prefix
+		want       netip.Prefix
+		wantRemove []netip.Prefix
+		wantAdd    bool
+	}{
+		{name: "empty link", want: p("10.8.0.7/32"), wantAdd: true},
+		{name: "already right", have: []netip.Prefix{p("10.8.0.7/32")}, want: p("10.8.0.7/32")},
+		{
+			name: "re-allocated", have: []netip.Prefix{p("10.8.0.7/32")}, want: p("10.8.0.9/32"),
+			wantRemove: []netip.Prefix{p("10.8.0.7/32")}, wantAdd: true,
+		},
+		{
+			name: "right plus a stale one", have: []netip.Prefix{p("10.8.0.7/32"), p("10.8.0.3/32")}, want: p("10.8.0.7/32"),
+			wantRemove: []netip.Prefix{p("10.8.0.3/32")},
+		},
+		{
+			name: "same IP, other mask", have: []netip.Prefix{p("10.8.0.1/24")}, want: p("10.8.0.1/32"),
+			wantRemove: []netip.Prefix{p("10.8.0.1/24")}, wantAdd: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotRemove, gotAdd := addressChanges(tt.have, tt.want)
+			if !slices.Equal(gotRemove, tt.wantRemove) || gotAdd != tt.wantAdd {
+				t.Errorf("addressChanges(%v, %v) = (%v, %v), want (%v, %v)", tt.have, tt.want, gotRemove, gotAdd, tt.wantRemove, tt.wantAdd)
 			}
 		})
 	}

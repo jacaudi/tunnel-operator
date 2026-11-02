@@ -27,7 +27,7 @@ func main() {
 	var wireguardListenPort int
 	flag.StringVar(&configFilePath, "state", "./state.json", "The location of the file that states the desired state")
 	flag.StringVar(&iface, "wg-iface", resources.WgInterface, "the wg device name. Default is wg0")
-	flag.StringVar(&wgUserspaceImplementationFallback, "wg-userspace-implementation-fallback", "wireguard-go", "The userspace implementation of wireguard to fallback to")
+	flag.StringVar(&wgUserspaceImplementationFallback, "wg-userspace-implementation-fallback", resources.UserspaceImplementation, "The userspace implementation of wireguard to fallback to")
 	flag.IntVar(&wireguardListenPort, "wg-listen-port", 51820, "the UDP port wireguard is listening on")
 	flag.IntVar(&verbosity, "v", 1, "the verbosity level")
 	flag.Parse()
