@@ -444,7 +444,7 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return r.failDegraded(ctx, wireguard, err, "ServiceApplyFailed", "Failed to apply service")
 	}
 	if err := clusterIPOutside(desiredSvc.Name, desiredSvc.Spec.ClusterIP, wireguard.Spec.LocalCIDRs); err != nil {
-		return ctrl.Result{}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionDegraded, Status: metav1.ConditionTrue, Reason: ReasonClusterIPOutsideLocalCIDRs, Message: err.Error()}, nil)
+		return ctrl.Result{RequeueAfter: time.Minute}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionDegraded, Status: metav1.ConditionTrue, Reason: ReasonClusterIPOutsideLocalCIDRs, Message: err.Error()}, nil)
 	}
 
 	// peers
@@ -553,8 +553,9 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// deployment
 	//
-	// One build, one apply. The apiserver diffs the applied field set against the stored
-	// object, so every field the builder renders converges without a bespoke drift check.
+	// The Deployment is built once and applied by applyDeployment, which may first clear a defaulted
+	// rollingUpdate. The apiserver diffs the applied field set against the stored object, so every
+	// field the builder renders converges without a bespoke drift check.
 	desiredDep, err := r.deploymentBuilder.ForWireguard(wireguard)
 	if err != nil {
 		return r.failDegraded(ctx, wireguard, err, "DeploymentBuildFailed", "Failed to build deployment")
