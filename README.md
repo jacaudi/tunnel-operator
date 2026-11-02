@@ -140,7 +140,8 @@ configured `wg0`.
   addresses, and writes the desired server state into that Secret as `state.json`.
 - **Server pod** — a privileged `sysctl` init container enables IPv4 forwarding, then the `agent`
   container (with `NET_ADMIN`) creates `wg0`, takes the first host of `peerCIDR` as its address,
-  and listens on UDP `51820`.
+  and listens on UDP `51820`. A `gluetun` container beside it holds the tunnel to your VPN
+  provider, and peer traffic egresses only through that tunnel.
 - **Agent** — watches the mounted `state.json` and adds, updates or removes peers by public key,
   each with its `/32` as `AllowedIPs`. Its `/health` endpoint backs the pod's readiness probe.
 - **Peer identity** — a peer is its public key. The private key stays wherever the client

@@ -93,5 +93,6 @@ and are deleted with it.
 - **Egress goes through gluetun, and fails closed.** Peer traffic leaves the pod only through
   gluetun's tunnel; see [gluetun-egress.md](gluetun-egress.md).
 - **A referenced Secret that does not exist is not a spec error.** The reserved-variable check
-  skips it, and the kubelet reports the missing Secret on the pod, so the `Wireguard` reads
-  `Ready=False` until the Secret exists.
+  skips it. Unless the reference sets `optional: true`, the kubelet reports the missing Secret on
+  the pod, so the `Wireguard` reads `Ready=False` until the Secret exists. With `optional: true`
+  the pod starts without it.

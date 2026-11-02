@@ -65,7 +65,10 @@ pref 102   iif wg0              lookup 51822   # agent: table 51822 = blackhole 
 - **Rule 90** sends traffic for `peerCIDR` back to `wg0`, so the provider's replies to a peer reach
   `wg0` instead of re-entering `tun0`.
 - **Rules 98 to 101** are gluetun's. Rules 98 to 100 keep local, outbound-subnet and inbound
-  traffic on `eth0`; rule 101 routes everything else into `tun0` while the tunnel is up.
+  traffic on `eth0`; rule 101 routes everything else into `tun0` while the tunnel is up. Rules 98 and
+  99 match by destination, so a peer packet addressed inside `localCIDRs` routes to `eth0` and is
+  stopped by the `FORWARD` drop policy rather than by routing. Traffic for the internet never reaches
+  the main table.
 - **Rule 102** catches whatever gluetun's rules did not route and blackholes it. This is the
   fail-closed rule: the pod's main-table default route through `eth0` is unreachable for peer
   traffic whatever happens to iptables.

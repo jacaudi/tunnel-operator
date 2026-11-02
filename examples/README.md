@@ -1,6 +1,6 @@
 # Example custom resources
 
-Two manifests: a server and one peer of it. Pair them with the reference docs:
+Two files: one holds a server and its provider Secret, the other a peer of that server. Pair them with the reference docs:
 [`Wireguard`](../docs/crd-wireguard.md) and [`WireguardPeer`](../docs/crd-wireguardpeer.md).
 
 ## Files
