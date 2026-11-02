@@ -1,0 +1,41 @@
+package resources
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+
+	corev1 "k8s.io/api/core/v1"
+)
+
+const (
+	// EgressInterface is gluetun's tunnel to the VPN provider; the agent forwards peer traffic into it.
+	EgressInterface = "tun0"
+	// WgInterface is the WireGuard link the agent owns.
+	WgInterface = "wg0"
+	// TunnelMTU is the MTU of gluetun's tunnel (gluetun's own v3.41 default, pinned because later
+	// versions default to path-MTU discovery).
+	TunnelMTU = 1320
+	// GluetunHealthAddress is where gluetun's health server listens; the agent's /health polls it.
+	GluetunHealthAddress = "127.0.0.1:9999"
+	// GluetunImage is the gluetun release the operator runs, pinned by digest.
+	GluetunImage = "ghcr.io/qdm12/gluetun:v3.41.3@sha256:fa19cc76b2af13d57a8d3dc3066f2ada061b1c761b8aecf989b3877c0486e027"
+
+	// gluetunRuleTable is the routing table gluetun's WireGuard mode installs its `ip rule` for; a
+	// rule left by an abrupt exit makes gluetun's next start fail with "file exists".
+	gluetunRuleTable = 51820
+)
+
+// ReservedGluetunEnv returns the gluetun variables the operator renders, in a fixed order. The
+// server's routing depends on each value, so spec.gluetun may not set any of them.
+func ReservedGluetunEnv(localCIDRs []string) []corev1.EnvVar {
+	return []corev1.EnvVar{
+		{Name: "VPN_TYPE", Value: "wireguard"},
+		{Name: "VPN_INTERFACE", Value: EgressInterface},
+		{Name: "FIREWALL_ENABLED_DISABLING_IT_SHOOTS_YOU_IN_YOUR_FOOT", Value: "on"},
+		{Name: "FIREWALL_INPUT_PORTS", Value: fmt.Sprintf("%d,%d", WireguardPort, HTTPPort)},
+		{Name: "FIREWALL_OUTBOUND_SUBNETS", Value: strings.Join(localCIDRs, ",")},
+		{Name: "HEALTH_SERVER_ADDRESS", Value: GluetunHealthAddress},
+		{Name: "WIREGUARD_MTU", Value: strconv.Itoa(TunnelMTU)},
+	}
+}
