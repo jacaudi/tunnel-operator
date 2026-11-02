@@ -18,7 +18,7 @@ type route struct {
 	LinkIndex int
 	Priority  int
 	Protocol  int
-	Scope     uint8 // netlink.Scope's underlying type: a delete must name the route's scope (decision 2)
+	Scope     uint8 // netlink.Scope's underlying type; a delete must name the route's scope or the kernel will not match it
 }
 
 // routePlan is the change that sends localCIDRs via the CNI gateway and everything else via wg0.

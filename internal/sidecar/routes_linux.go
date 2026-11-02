@@ -15,7 +15,7 @@ import (
 // ensureRoutes applies planRoutes to the main table. In order, it replaces each localCIDRs route,
 // replaces the default route with one via wg0, deletes each stale route, and deletes every IPv6
 // default route. Deleting a route that is already gone is not an error.
-func ensureRoutes(wgIndex int, localCIDRs []netip.Prefix) error { //nolint:unused // the tunnel's Apply and Check call it once they exist
+func ensureRoutes(wgIndex int, localCIDRs []netip.Prefix) error {
 	listed, err := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Table: unix.RT_TABLE_MAIN}, netlink.RT_FILTER_TABLE)
 	if err != nil {
 		return fmt.Errorf("list routes: %w", err)
@@ -56,7 +56,7 @@ func ensureRoutes(wgIndex int, localCIDRs []netip.Prefix) error { //nolint:unuse
 }
 
 // routesVia reports whether the kernel's route to dst leaves through the link linkIndex.
-func routesVia(dst netip.Addr, linkIndex int) (bool, error) { //nolint:unused // the tunnel's Apply and Check call it once they exist
+func routesVia(dst netip.Addr, linkIndex int) (bool, error) {
 	routes, err := netlink.RouteGet(net.IP(dst.AsSlice()))
 	if err != nil {
 		return false, fmt.Errorf("route get %s: %w", dst, err)
@@ -64,7 +64,8 @@ func routesVia(dst netip.Addr, linkIndex int) (bool, error) { //nolint:unused //
 	return len(routes) > 0 && routes[0].LinkIndex == linkIndex, nil
 }
 
-// toRoute converts a netlink route to a route: a nil Dst is 0.0.0.0/0 and a nil Gw is the zero Addr.
+// toRoute converts a netlink route to a route: a nil Dst is 0.0.0.0/0, a Dst that does not convert is
+// the zero (invalid) Prefix, never a default route, and a nil Gw is the zero Addr.
 func toRoute(r netlink.Route) route {
 	out := route{
 		Dst:       netip.PrefixFrom(netip.IPv4Unspecified(), 0),
@@ -74,6 +75,7 @@ func toRoute(r netlink.Route) route {
 		Scope:     uint8(r.Scope),
 	}
 	if r.Dst != nil {
+		out.Dst = netip.Prefix{}
 		ones, _ := r.Dst.Mask.Size()
 		if addr, ok := netip.AddrFromSlice(r.Dst.IP); ok {
 			out.Dst = netip.PrefixFrom(addr.Unmap(), ones)
@@ -86,7 +88,7 @@ func toRoute(r netlink.Route) route {
 }
 
 // deleteStale deletes each route in stale from the main table, ignoring one that is already gone.
-func deleteStale(stale []route) error { //nolint:unused // the tunnel's Apply and Check call it once they exist
+func deleteStale(stale []route) error {
 	for _, r := range stale {
 		// netlink's routeHandle always writes msg.Scope, so the delete must carry the route's own scope
 		// or a gateway-less "default dev X scope link" would not match and would stay.
@@ -105,12 +107,16 @@ func deleteStale(stale []route) error { //nolint:unused // the tunnel's Apply an
 }
 
 // deleteIPv6Defaults deletes every IPv6 default route in the main table, ignoring one already gone.
-func deleteIPv6Defaults() error { //nolint:unused // the tunnel's Apply and Check call it once they exist
+func deleteIPv6Defaults() error {
 	listed, err := netlink.RouteListFiltered(netlink.FAMILY_V6, &netlink.Route{Table: unix.RT_TABLE_MAIN}, netlink.RT_FILTER_TABLE)
 	if err != nil {
 		return fmt.Errorf("list routes: %w", err)
 	}
 	for _, r := range listed {
+		// With ipv6.disable=1 an AF_INET6 dump can fall back to an all-family dump: never delete an IPv4 route.
+		if (r.Dst != nil && r.Dst.IP.To4() != nil) || (r.Gw != nil && r.Gw.To4() != nil) {
+			continue
+		}
 		if r.Dst != nil {
 			if ones, _ := r.Dst.Mask.Size(); ones != 0 {
 				continue
@@ -128,6 +134,6 @@ func deleteIPv6Defaults() error { //nolint:unused // the tunnel's Apply and Chec
 }
 
 // ipNet returns p as the *net.IPNet netlink takes.
-func ipNet(p netip.Prefix) *net.IPNet { //nolint:unused // the tunnel's Apply and Check call it once they exist
+func ipNet(p netip.Prefix) *net.IPNet {
 	return &net.IPNet{IP: p.Addr().AsSlice(), Mask: net.CIDRMask(p.Bits(), p.Addr().BitLen())}
 }

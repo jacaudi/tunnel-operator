@@ -39,6 +39,11 @@ func TestToRoute(t *testing.T) {
 				Scope: uint8(netlink.SCOPE_LINK),
 			},
 		},
+		{
+			name: "malformed destination is not a default route",
+			in:   netlink.Route{Dst: &net.IPNet{IP: net.IP{1, 2, 3}, Mask: net.CIDRMask(8, 32)}, LinkIndex: 3},
+			want: route{LinkIndex: 3},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
