@@ -115,8 +115,11 @@ func addressPoolExhausted(cidr string) notReady {
 // desiredState renders the agent's state.json content from the server's name, namespace and
 // spec and from each peer's name, namespace, spec.publicKey, spec.wireguardRef and
 // status.address, sorted by peer name. No other status field, no metadata and no resourceVersion reach it, so
-// writing them never changes the rendered state.
+// writing them never changes the rendered state. spec.gluetun is dropped: it can carry provider
+// credentials, and the agent needs none of it.
 func desiredState(wg *v1alpha1.Wireguard, privateKey string, peers []v1alpha1.WireguardPeer) agent.State {
+	spec := *wg.Spec.DeepCopy()
+	spec.Gluetun = v1alpha1.GluetunSpec{}
 	rendered := make([]v1alpha1.WireguardPeer, len(peers))
 	for i, peer := range peers {
 		rendered[i] = v1alpha1.WireguardPeer{
@@ -130,7 +133,7 @@ func desiredState(wg *v1alpha1.Wireguard, privateKey string, peers []v1alpha1.Wi
 	return agent.State{
 		Server: v1alpha1.Wireguard{
 			ObjectMeta: metav1.ObjectMeta{Name: wg.Name, Namespace: wg.Namespace},
-			Spec:       *wg.Spec.DeepCopy(),
+			Spec:       spec,
 		},
 		ServerPrivateKey: privateKey,
 		Peers:            rendered,

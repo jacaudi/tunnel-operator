@@ -574,3 +574,27 @@ func TestMarkPeersWireguardNotFoundStatusWriteErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestDesiredStateDropsGluetun(t *testing.T) {
+	wg := &v1alpha1.Wireguard{
+		ObjectMeta: metav1.ObjectMeta{Name: "vpn", Namespace: "media"},
+		Spec: v1alpha1.WireguardSpec{
+			LocalCIDRs: []string{"10.96.0.0/12"},
+			Gluetun: v1alpha1.GluetunSpec{
+				Env: []corev1.EnvVar{{Name: "A", Value: "b"}},
+				EnvFrom: []corev1.EnvFromSource{{
+					SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "s"}},
+				}},
+			},
+		},
+	}
+
+	got := desiredState(wg, "k", nil).Server.Spec
+	want := v1alpha1.WireguardSpec{LocalCIDRs: []string{"10.96.0.0/12"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("desiredState().Server.Spec = %+v, want %+v", got, want)
+	}
+	if len(wg.Spec.Gluetun.Env) != 1 {
+		t.Errorf("desiredState() zeroed its input: len(wg.Spec.Gluetun.Env) = %d, want 1", len(wg.Spec.Gluetun.Env))
+	}
+}

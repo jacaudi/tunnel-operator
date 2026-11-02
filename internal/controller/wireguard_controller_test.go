@@ -77,9 +77,41 @@ var _ = Describe("wireguard controller", func() {
 		}
 	})
 	Context("Wireguard", func() {
+		It("rejects a Wireguard without localCIDRs", func() {
+			err := k8sClient.Create(context.Background(), &v1alpha1.Wireguard{
+				ObjectMeta: metav1.ObjectMeta{Name: "no-local", Namespace: wgNamespace},
+				Spec:       v1alpha1.WireguardSpec{},
+			})
+			Expect(apierrors.IsInvalid(err)).To(BeTrue(), "a nil localCIDRs is rejected, got %v", err)
+
+			err = k8sClient.Create(context.Background(), &v1alpha1.Wireguard{
+				ObjectMeta: metav1.ObjectMeta{Name: "no-local", Namespace: wgNamespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: []string{}},
+			})
+			Expect(apierrors.IsInvalid(err)).To(BeTrue(), "an empty localCIDRs is rejected, got %v", err)
+			Expect(err.Error()).To(ContainSubstring("spec.localCIDRs"))
+		})
+
+		It("keeps spec.gluetun out of the server's state.json", func() {
+			key := types.NamespacedName{Name: "vpn-gluetun-strip", Namespace: wgNamespace}
+			Expect(k8sClient.Create(context.Background(), &v1alpha1.Wireguard{
+				ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+				Spec: v1alpha1.WireguardSpec{
+					LocalCIDRs: testLocalCIDRs,
+					Gluetun: v1alpha1.GluetunSpec{
+						Env: []corev1.EnvVar{{Name: "WIREGUARD_PRIVATE_KEY", Value: "inline-secret-value"}},
+					},
+				},
+			})).Should(Succeed())
+
+			Eventually(serverState(key), Timeout, Interval).Should(ContainSubstring("10.0.0.0/24"))
+			Consistently(serverState(key), "2s", Interval).ShouldNot(ContainSubstring("inline-secret-value"))
+		})
+
 		It("allocates an address to a publicKey peer and writes no client config", func() {
 			wgServer := &v1alpha1.Wireguard{
 				ObjectMeta: metav1.ObjectMeta{Name: wgKey.Name, Namespace: wgKey.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
 			}
 			Expect(k8sClient.Create(context.Background(), wgServer)).Should(Succeed())
 
@@ -188,6 +220,7 @@ var _ = Describe("wireguard controller", func() {
 					Name:      wgKey.Name,
 					Namespace: wgKey.Namespace,
 				},
+				Spec: v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
 			}
 			expectedLabels := map[string]string{"app": "wireguard", "instance": wgKey.Name}
 
@@ -313,7 +346,8 @@ var _ = Describe("wireguard controller", func() {
 					Namespace: wgKey.Namespace,
 				},
 				Spec: v1alpha1.WireguardSpec{
-					PeerCIDR: customCIDR,
+					PeerCIDR:   customCIDR,
+					LocalCIDRs: testLocalCIDRs,
 				},
 			}
 			expectedLabels := map[string]string{"app": "wireguard", "instance": wgKey.Name}
@@ -379,6 +413,7 @@ var _ = Describe("wireguard controller", func() {
 					Name:      wgKey.Name,
 					Namespace: wgKey.Namespace,
 				},
+				Spec: v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
 			}
 			Expect(k8sClient.Create(context.Background(), wgServer)).Should(Succeed())
 
@@ -445,6 +480,7 @@ var _ = Describe("wireguard controller", func() {
 		It("converges a spec field that never had a bespoke drift check", func() {
 			created := &v1alpha1.Wireguard{
 				ObjectMeta: metav1.ObjectMeta{Name: wgKey.Name, Namespace: wgKey.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
 			}
 			Expect(k8sClient.Create(context.Background(), created)).Should(Succeed())
 
@@ -493,6 +529,7 @@ var _ = Describe("wireguard controller", func() {
 		It("reconciles a new peer through the peer watch and never owns it", func() {
 			Expect(k8sClient.Create(context.Background(), &v1alpha1.Wireguard{
 				ObjectMeta: metav1.ObjectMeta{Name: wgKey.Name, Namespace: wgKey.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
 			})).Should(Succeed())
 			Eventually(func() string {
 				wg := &v1alpha1.Wireguard{}
@@ -549,6 +586,7 @@ var _ = Describe("wireguard controller", func() {
 
 			wg := &v1alpha1.Wireguard{
 				ObjectMeta: metav1.ObjectMeta{Name: wgKey.Name, Namespace: wgKey.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
 			}
 			Expect(k8sClient.Create(context.Background(), wg)).Should(Succeed())
 			Eventually(func() string {
@@ -577,6 +615,7 @@ var _ = Describe("wireguard controller", func() {
 		It("releases a peer's address when its publicKey is removed", func() {
 			Expect(k8sClient.Create(context.Background(), &v1alpha1.Wireguard{
 				ObjectMeta: metav1.ObjectMeta{Name: wgKey.Name, Namespace: wgKey.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
 			})).Should(Succeed())
 
 			releasedKey := types.NamespacedName{Name: wgName + "-released-peer", Namespace: wgNamespace}
@@ -620,6 +659,7 @@ var _ = Describe("wireguard controller", func() {
 			for _, key := range []types.NamespacedName{wgKey, wg2Key} {
 				Expect(k8sClient.Create(context.Background(), &v1alpha1.Wireguard{
 					ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+					Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
 				})).Should(Succeed())
 			}
 			for _, key := range []types.NamespacedName{wgKey, wg2Key} {
@@ -654,6 +694,7 @@ var _ = Describe("wireguard controller", func() {
 		It("does not rewrite the server Secret for a peer edit the agent does not read", func() {
 			Expect(k8sClient.Create(context.Background(), &v1alpha1.Wireguard{
 				ObjectMeta: metav1.ObjectMeta{Name: wgKey.Name, Namespace: wgKey.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
 			})).Should(Succeed())
 
 			publicKey := newPublicKey()
@@ -702,7 +743,7 @@ var _ = Describe("wireguard controller", func() {
 			// A /30 has two allocatable addresses: .0 is the network and .1 the gateway.
 			Expect(k8sClient.Create(context.Background(), &v1alpha1.Wireguard{
 				ObjectMeta: metav1.ObjectMeta{Name: wgKey.Name, Namespace: wgKey.Namespace},
-				Spec:       v1alpha1.WireguardSpec{PeerCIDR: "10.8.0.0/30"},
+				Spec:       v1alpha1.WireguardSpec{PeerCIDR: "10.8.0.0/30", LocalCIDRs: testLocalCIDRs},
 			})).Should(Succeed())
 
 			pool1Key := types.NamespacedName{Name: wgName + "-pool-1", Namespace: wgNamespace}
@@ -761,6 +802,7 @@ var _ = Describe("wireguard controller", func() {
 		It("keeps the oldest peer's address when two peers share one", func() {
 			Expect(k8sClient.Create(context.Background(), &v1alpha1.Wireguard{
 				ObjectMeta: metav1.ObjectMeta{Name: wgKey.Name, Namespace: wgKey.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
 			})).Should(Succeed())
 
 			peerAKey := types.NamespacedName{Name: wgName + "-peer-a", Namespace: wgNamespace}
@@ -818,10 +860,11 @@ var _ = Describe("wireguard controller", func() {
 			wg2Key := types.NamespacedName{Name: wgName + "2", Namespace: wgNamespace}
 			Expect(k8sClient.Create(context.Background(), &v1alpha1.Wireguard{
 				ObjectMeta: metav1.ObjectMeta{Name: wgKey.Name, Namespace: wgKey.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
 			})).Should(Succeed())
 			Expect(k8sClient.Create(context.Background(), &v1alpha1.Wireguard{
 				ObjectMeta: metav1.ObjectMeta{Name: wg2Key.Name, Namespace: wg2Key.Namespace},
-				Spec:       v1alpha1.WireguardSpec{PeerCIDR: "10.9.0.0/24"},
+				Spec:       v1alpha1.WireguardSpec{PeerCIDR: "10.9.0.0/24", LocalCIDRs: testLocalCIDRs},
 			})).Should(Succeed())
 			for _, key := range []types.NamespacedName{wgKey, wg2Key} {
 				Eventually(func() string {
@@ -861,6 +904,7 @@ var _ = Describe("wireguard controller", func() {
 		It("reverts a Deployment field changed outside the operator", func() {
 			created := &v1alpha1.Wireguard{
 				ObjectMeta: metav1.ObjectMeta{Name: wgKey.Name, Namespace: wgKey.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
 			}
 			Expect(k8sClient.Create(context.Background(), created)).Should(Succeed())
 
@@ -900,6 +944,7 @@ var _ = Describe("wireguard controller", func() {
 		It("preserves the apiserver's clusterIP allocation across reconciles", func() {
 			created := &v1alpha1.Wireguard{
 				ObjectMeta: metav1.ObjectMeta{Name: wgKey.Name, Namespace: wgKey.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
 			}
 			Expect(k8sClient.Create(context.Background(), created)).Should(Succeed())
 
@@ -942,6 +987,7 @@ var _ = Describe("wireguard controller", func() {
 		It("publishes the server's endpoint and public key in status", func() {
 			Expect(k8sClient.Create(context.Background(), &v1alpha1.Wireguard{
 				ObjectMeta: metav1.ObjectMeta{Name: wgKey.Name, Namespace: wgKey.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
 			})).Should(Succeed())
 
 			serviceKey := types.NamespacedName{Name: wgName + "-svc", Namespace: wgNamespace}
@@ -998,6 +1044,7 @@ var _ = Describe("wireguard controller", func() {
 			// One of the two legacy seeds in the suite (see the Service variant below); design §7.3.
 			owner := &v1alpha1.Wireguard{
 				ObjectMeta: metav1.ObjectMeta{Name: wgKey.Name, Namespace: wgKey.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
 			}
 			owner.Spec.Tolerations = []corev1.Toleration{{
 				Key:      "probe.test/legacy",
@@ -1074,6 +1121,7 @@ var _ = Describe("wireguard controller", func() {
 			serviceKey := types.NamespacedName{Name: wgName + "-svc", Namespace: wgNamespace}
 			owner := &v1alpha1.Wireguard{
 				ObjectMeta: metav1.ObjectMeta{Name: wgKey.Name, Namespace: wgKey.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
 			}
 			legacy, err := resources.NewServiceBuilder(k8sClient.Scheme()).ForWireguard(owner)
 			Expect(err).ShouldNot(HaveOccurred())
@@ -1132,6 +1180,7 @@ var _ = Describe("wireguard controller", func() {
 
 			created := &v1alpha1.Wireguard{
 				ObjectMeta: metav1.ObjectMeta{Name: wgKey.Name, Namespace: wgKey.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
 			}
 			Expect(k8sClient.Create(context.Background(), created)).Should(Succeed())
 
@@ -1156,6 +1205,7 @@ var _ = Describe("wireguard controller", func() {
 			// A memory request above its limit is rejected by the apiserver, permanently.
 			created := &v1alpha1.Wireguard{
 				ObjectMeta: metav1.ObjectMeta{Name: wgKey.Name, Namespace: wgKey.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
 			}
 			created.Spec.Agent.Resources = corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("256Mi")},
@@ -1220,7 +1270,7 @@ var _ = Describe("wireguard controller", func() {
 			badKey := types.NamespacedName{Name: "vpn-badcidr", Namespace: wgNamespace}
 			bad := &v1alpha1.Wireguard{
 				ObjectMeta: metav1.ObjectMeta{Name: badKey.Name, Namespace: badKey.Namespace},
-				Spec:       v1alpha1.WireguardSpec{PeerCIDR: "10.8.0.5/24"},
+				Spec:       v1alpha1.WireguardSpec{PeerCIDR: "10.8.0.5/24", LocalCIDRs: testLocalCIDRs},
 			}
 			Expect(k8sClient.Create(context.Background(), bad)).Should(Succeed())
 
@@ -1292,6 +1342,7 @@ var _ = Describe("wireguard controller", func() {
 
 			Expect(k8sClient.Create(context.Background(), &v1alpha1.Wireguard{
 				ObjectMeta: metav1.ObjectMeta{Name: wgKey.Name, Namespace: wgKey.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
 			})).Should(Succeed())
 			// The nudge runs only once the server Secret exists, so wait for it to settle.
 			Eventually(serverState(wgKey), Timeout, Interval).ShouldNot(BeEmpty())
