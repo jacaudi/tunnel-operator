@@ -21,7 +21,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net"
+	"slices"
 	"strconv"
 	"time"
 
@@ -330,6 +332,41 @@ func (r *WireguardReconciler) applyDeployment(ctx context.Context, dep *appsv1.D
 	return r.applyOwned(ctx, dep)
 }
 
+// specProblem returns the Degraded reason and message for a spec the operator cannot render, or an
+// empty reason when it can. It checks, in order: peerCIDR, localCIDRs, their overlap, spec.gluetun.env,
+// then the keys of each Secret spec.gluetun.envFrom references. A referenced Secret that does not
+// exist is skipped; the kubelet reports it on the pod. err is any other failure to read a Secret.
+func (r *WireguardReconciler) specProblem(ctx context.Context, wg *v1alpha1.Wireguard) (reason, message string, err error) {
+	if err := validatePeerCIDR(effectivePeerCIDR4(wg)); err != nil {
+		return ReasonInvalidPeerCIDR, err.Error(), nil
+	}
+	if err := validateLocalCIDRs(wg.Spec.LocalCIDRs); err != nil {
+		return ReasonInvalidLocalCIDRs, err.Error(), nil
+	}
+	if err := peerCIDROverlap(effectivePeerCIDR4(wg), wg.Spec.LocalCIDRs); err != nil {
+		return ReasonPeerCIDROverlapsLocalCIDRs, err.Error(), nil
+	}
+	if name := reservedInEnv(wg.Spec.Gluetun.Env); name != "" {
+		return ReasonReservedGluetunEnv, fmt.Sprintf("spec.gluetun.env sets %s, which the operator renders", name), nil
+	}
+	for i, src := range wg.Spec.Gluetun.EnvFrom {
+		if src.SecretRef == nil {
+			continue
+		}
+		secret := &corev1.Secret{}
+		key := types.NamespacedName{Name: src.SecretRef.Name, Namespace: wg.Namespace}
+		if err := r.Get(ctx, key, secret); errors.IsNotFound(err) {
+			continue
+		} else if err != nil {
+			return "", "", fmt.Errorf("read Secret %s referenced by spec.gluetun.envFrom[%d]: %w", key.Name, i, err)
+		}
+		if name := reservedInKeys(src.Prefix, slices.Collect(maps.Keys(secret.Data))); name != "" {
+			return ReasonReservedGluetunEnv, fmt.Sprintf("Secret %s, referenced by spec.gluetun.envFrom[%d], sets %s, which the operator renders", key.Name, i, name), nil
+		}
+	}
+	return "", "", nil
+}
+
 //+kubebuilder:rbac:groups=vpn.wireguard-operator.io,resources=wireguards,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=vpn.wireguard-operator.io,resources=wireguards/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=vpn.wireguard-operator.io,resources=wireguards/finalizers,verbs=update
@@ -384,10 +421,12 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
-	// A peerCIDR the allocator cannot serve is permanent until the spec changes, and that edit
-	// triggers the next reconcile, so report it and return no error; only a failed status write is retried.
-	if err := validatePeerCIDR(effectivePeerCIDR4(wireguard)); err != nil {
-		return ctrl.Result{}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionDegraded, Status: metav1.ConditionTrue, Reason: "InvalidPeerCIDR", Message: err.Error()}, nil)
+	// A spec the operator cannot render stays Degraded until the spec changes, and that edit triggers
+	// the next reconcile. A Secret it references is not watched, so the check is also re-run after a minute.
+	if reason, msg, err := r.specProblem(ctx, wireguard); err != nil {
+		return ctrl.Result{}, err
+	} else if reason != "" {
+		return ctrl.Result{RequeueAfter: time.Minute}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionDegraded, Status: metav1.ConditionTrue, Reason: reason, Message: msg}, nil)
 	}
 
 	// service
@@ -400,6 +439,9 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	if err := r.applyOwned(ctx, desiredSvc); err != nil {
 		return r.failDegraded(ctx, wireguard, err, "ServiceApplyFailed", "Failed to apply service")
+	}
+	if err := clusterIPOutside(desiredSvc.Name, desiredSvc.Spec.ClusterIP, wireguard.Spec.LocalCIDRs); err != nil {
+		return ctrl.Result{}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionDegraded, Status: metav1.ConditionTrue, Reason: ReasonClusterIPOutsideLocalCIDRs, Message: err.Error()}, nil)
 	}
 
 	// peers

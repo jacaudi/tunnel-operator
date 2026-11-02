@@ -1424,9 +1424,135 @@ var _ = Describe("wireguard controller", func() {
 				return got.Annotations["wgConfigLastUpdated"]
 			}, "3s", Interval).Should(BeEmpty(), "a pod in another namespace must not be nudged")
 		})
+
+		// expectDegradedWithoutDeployment waits for the Degraded condition want on the Wireguard key
+		// names, then asserts its Deployment is never rendered.
+		expectDegradedWithoutDeployment := func(key types.NamespacedName, want string) {
+			Eventually(degraded(key), Timeout, Interval).Should(Equal(want))
+			Consistently(func() bool {
+				err := k8sClient.Get(context.Background(), types.NamespacedName{Name: key.Name + "-dep", Namespace: key.Namespace}, &appsv1.Deployment{})
+				return apierrors.IsNotFound(err)
+			}, "2s", Interval).Should(BeTrue(), "a spec the operator cannot render must render no Deployment")
+		}
+
+		It("reports InvalidLocalCIDRs and renders no Deployment", func() {
+			key := types.NamespacedName{Name: "vpn-badlocal", Namespace: wgNamespace}
+			Expect(k8sClient.Create(context.Background(), &v1alpha1.Wireguard{
+				ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: []string{"10.0.0.0/24", "10.1.0.1/16"}},
+			})).Should(Succeed())
+
+			expectDegradedWithoutDeployment(key, `InvalidLocalCIDRs|localCIDRs[1] "10.1.0.1/16" has host bits set; use 10.1.0.0/16`)
+		})
+
+		It("reports PeerCIDROverlapsLocalCIDRs and renders no Deployment", func() {
+			key := types.NamespacedName{Name: "vpn-overlap", Namespace: wgNamespace}
+			Expect(k8sClient.Create(context.Background(), &v1alpha1.Wireguard{
+				ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: []string{"10.0.0.0/24", "10.8.0.0/16"}},
+			})).Should(Succeed())
+
+			expectDegradedWithoutDeployment(key, "PeerCIDROverlapsLocalCIDRs|peerCIDR 10.8.0.0/24 overlaps localCIDRs[1] 10.8.0.0/16; peer addresses must lie outside the cluster's networks")
+		})
+
+		It("reports ClusterIPOutsideLocalCIDRs and renders no Deployment", func() {
+			key := types.NamespacedName{Name: "vpn-cip", Namespace: wgNamespace}
+			Expect(k8sClient.Create(context.Background(), &v1alpha1.Wireguard{
+				ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: []string{"192.168.0.0/16"}},
+			})).Should(Succeed())
+
+			svcKey := types.NamespacedName{Name: key.Name + "-svc", Namespace: key.Namespace}
+			clusterIP := func() string {
+				svc := &corev1.Service{}
+				if err := k8sClient.Get(context.Background(), svcKey, svc); err != nil {
+					return ""
+				}
+				return svc.Spec.ClusterIP
+			}
+			Eventually(clusterIP, Timeout, Interval).ShouldNot(BeEmpty())
+
+			expectDegradedWithoutDeployment(key, "ClusterIPOutsideLocalCIDRs|Service vpn-cip-svc has ClusterIP "+clusterIP()+", which is in no localCIDRs entry; add the cluster's Service CIDR to localCIDRs")
+		})
+
+		It("reports ReservedGluetunEnv for an env entry, and clears it once the entry is gone", func() {
+			key := types.NamespacedName{Name: "vpn-resenv", Namespace: wgNamespace}
+			Expect(k8sClient.Create(context.Background(), &v1alpha1.Wireguard{
+				ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+				Spec: v1alpha1.WireguardSpec{
+					LocalCIDRs: testLocalCIDRs,
+					Gluetun: v1alpha1.GluetunSpec{Env: []corev1.EnvVar{
+						{Name: "VPN_SERVICE_PROVIDER", Value: "custom"},
+						{Name: "VPN_INTERFACE", Value: "wg0"},
+					}},
+				},
+			})).Should(Succeed())
+
+			expectDegradedWithoutDeployment(key, "ReservedGluetunEnv|spec.gluetun.env sets VPN_INTERFACE, which the operator renders")
+
+			Eventually(func() error {
+				wg := &v1alpha1.Wireguard{}
+				if err := k8sClient.Get(context.Background(), key, wg); err != nil {
+					return err
+				}
+				wg.Spec.Gluetun.Env = []corev1.EnvVar{{Name: "VPN_SERVICE_PROVIDER", Value: "custom"}}
+				return k8sClient.Update(context.Background(), wg)
+			}, Timeout, Interval).Should(Succeed())
+
+			Eventually(func() error {
+				return k8sClient.Get(context.Background(), types.NamespacedName{Name: key.Name + "-dep", Namespace: key.Namespace}, &appsv1.Deployment{})
+			}, Timeout, Interval).Should(Succeed())
+			Eventually(func() string {
+				wg := &v1alpha1.Wireguard{}
+				if err := k8sClient.Get(context.Background(), key, wg); err != nil {
+					return "get-failed"
+				}
+				c := meta.FindStatusCondition(wg.Status.Conditions, ConditionDegraded)
+				if c == nil || c.Status != metav1.ConditionFalse {
+					return "not-cleared"
+				}
+				return c.Reason
+			}, Timeout, Interval).Should(Equal("Reconciled"))
+		})
+
+		It("reports ReservedGluetunEnv for a key of a referenced Secret", func() {
+			Expect(k8sClient.Create(context.Background(), &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "gluetun-creds", Namespace: wgNamespace},
+				Data:       map[string][]byte{"WIREGUARD_PRIVATE_KEY": []byte("x"), "VPN_TYPE": []byte("openvpn")},
+			})).Should(Succeed())
+
+			key := types.NamespacedName{Name: "vpn-ressecret", Namespace: wgNamespace}
+			Expect(k8sClient.Create(context.Background(), &v1alpha1.Wireguard{
+				ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+				Spec: v1alpha1.WireguardSpec{
+					LocalCIDRs: testLocalCIDRs,
+					Gluetun: v1alpha1.GluetunSpec{EnvFrom: []corev1.EnvFromSource{{
+						SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "gluetun-creds"}},
+					}}},
+				},
+			})).Should(Succeed())
+
+			expectDegradedWithoutDeployment(key, "ReservedGluetunEnv|Secret gluetun-creds, referenced by spec.gluetun.envFrom[0], sets VPN_TYPE, which the operator renders")
+		})
 	})
 
 })
+
+// degraded returns a poller for the Degraded condition of the Wireguard named by key: its reason and
+// message joined by "|" while the condition is True, else "".
+func degraded(key types.NamespacedName) func() string {
+	return func() string {
+		wg := &v1alpha1.Wireguard{}
+		if err := k8sClient.Get(context.Background(), key, wg); err != nil {
+			return ""
+		}
+		c := meta.FindStatusCondition(wg.Status.Conditions, ConditionDegraded)
+		if c == nil || c.Status != metav1.ConditionTrue {
+			return ""
+		}
+		return c.Reason + "|" + c.Message
+	}
+}
 
 // newPublicKey returns a fresh WireGuard public key. The operator no longer mints peer keys, so
 // every peer a spec expects to be configured must carry one.
