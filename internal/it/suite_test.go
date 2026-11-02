@@ -50,14 +50,17 @@ func TestAPIs(t *testing.T) {
 }
 
 const (
-	Timeout             = time.Second * 120
+	Timeout = time.Second * 120
+	// GatewayTimeout bounds waits that include gluetun becoming healthy through the fake exit node (about 1 s once
+	// both pods run with images cached, measured on kind; the rest of the budget is image pulls on a cold node).
+	GatewayTimeout      = 5 * time.Minute
 	Interval            = time.Second * 1
 	testClusterName     = "wg-kind-test"
 	testKindContextName = "kind-" + testClusterName
 	TestNamespace       = "default"
 )
 
-func waitForDeploymentTobeReady(name string, namespace string) {
+func waitForDeploymentTobeReady(name string, namespace string, timeout time.Duration) {
 	// Wait for the rollout to complete: observed generation matches the spec
 	// generation AND ready replicas equals the desired replicas. This prevents
 	// false positives during rolling updates where the old pod is still ready
@@ -79,7 +82,7 @@ func waitForDeploymentTobeReady(name string, namespace string) {
 		return deployment.Status.ObservedGeneration >= deployment.Generation &&
 			deployment.Status.ReadyReplicas == desired &&
 			deployment.Status.UpdatedReplicas == desired
-	}, Timeout, Interval).Should(BeTrue())
+	}, timeout, Interval).Should(BeTrue())
 
 }
 
@@ -96,7 +99,7 @@ func waitForDeploymentTobeReady(name string, namespace string) {
 //
 // The condition type is the literal "Ready": this suite is an external client of the CRD's
 // condition contract and does not import internal/controller.
-func WaitForWireguardToBeReady(name string, namespace string) {
+func WaitForWireguardToBeReady(name string, namespace string, timeout time.Duration) {
 	Eventually(func(g Gomega) {
 		wgKey := types.NamespacedName{
 			Namespace: namespace,
@@ -108,9 +111,9 @@ func WaitForWireguardToBeReady(name string, namespace string) {
 		g.Expect(ready).NotTo(BeNil(), "Wireguard %s/%s has no Ready condition; conditions: %+v", namespace, name, wg.Status.Conditions)
 		g.Expect(ready.Status).To(Equal(metav1.ConditionTrue), "Ready=%s reason=%s: %s", ready.Status, ready.Reason, ready.Message)
 		g.Expect(ready.ObservedGeneration).To(BeNumerically(">=", wg.Generation), "Ready observedGeneration %d is behind generation %d", ready.ObservedGeneration, wg.Generation)
-	}, Timeout, Interval).Should(Succeed())
+	}, timeout, Interval).Should(Succeed())
 
-	waitForDeploymentTobeReady(name+"-dep", namespace)
+	waitForDeploymentTobeReady(name+"-dep", namespace, timeout)
 }
 func WaitForPeerToBeReady(name string, namespace string) {
 	Eventually(func() string {
@@ -132,12 +135,13 @@ func WaitForPodSucceeded(name string, namespace string) {
 	}, Timeout, Interval).Should(Equal("Succeeded"))
 }
 
-func KubectlLogs(pod string, namespace string) (string, error) {
-	cmd := exec.Command("kubectl", "logs",
-		"--context", testKindContextName,
-		"-n", namespace,
-		pod,
-	)
+// kubectl runs kubectl against the test kind context with stdin (none when empty) and returns its
+// trimmed stdout, or its trimmed stderr and the error when it fails.
+func kubectl(stdin string, args ...string) (string, error) {
+	cmd := exec.Command("kubectl", append([]string{"--context", testKindContextName}, args...)...)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -147,78 +151,29 @@ func KubectlLogs(pod string, namespace string) (string, error) {
 	return strings.TrimSpace(stdout.String()), nil
 }
 
-// KubectlExec runs a command in a container of the first pod behind a Deployment, using the
-// test kind context, and returns its trimmed stdout (stderr on failure).
-func KubectlExec(deployment, container, namespace string, command ...string) (string, error) {
-	args := []string{"exec",
-		"--context", testKindContextName,
-		"-n", namespace,
-		"deploy/" + deployment,
-		"-c", container,
-		"--",
-	}
-	cmd := exec.Command("kubectl", append(args, command...)...)
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return strings.TrimSpace(stderr.String()), err
-	}
-	return strings.TrimSpace(stdout.String()), nil
+func KubectlLogs(pod string, namespace string) (string, error) {
+	return kubectl("", "logs", "-n", namespace, pod)
+}
+
+// KubectlExec runs a command in a container of target (deploy/<name> or pod/<name>) and returns its
+// trimmed stdout, or stderr on failure.
+func KubectlExec(target, container, namespace string, command ...string) (string, error) {
+	return kubectl("", append([]string{"exec", "-n", namespace, target, "-c", container, "--"}, command...)...)
 }
 
 // KubectlApply applies a YAML resource to the given namespace using the test kind context.
 func KubectlApply(resource string, namespace string) (string, error) {
-	cmd := exec.Command("kubectl", "apply",
-		"--context", testKindContextName,
-		"-n", namespace,
-		"-f", "-",
-	)
-	cmd.Stdin = strings.NewReader(resource)
-
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return strings.TrimSpace(stderr.String()), err
-	}
-	return strings.TrimSpace(stdout.String()), nil
+	return kubectl(resource, "apply", "-n", namespace, "-f", "-")
 }
 
 // KubectlGet runs kubectl get with a jsonpath and returns the trimmed output.
 func KubectlGet(resource string, namespace string, jsonpath string) (string, error) {
-	cmd := exec.Command("kubectl", "get",
-		"--context", testKindContextName,
-		"-n", namespace,
-		resource,
-		"-o", "jsonpath="+jsonpath,
-	)
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return strings.TrimSpace(stderr.String()), err
-	}
-	return strings.TrimSpace(stdout.String()), nil
+	return kubectl("", "get", "-n", namespace, resource, "-o", "jsonpath="+jsonpath)
 }
 
 // KubectlPatch patches a resource using a strategic merge patch.
 func KubectlPatch(resource string, namespace string, patchType string, patch string) (string, error) {
-	cmd := exec.Command("kubectl", "patch",
-		"--context", testKindContextName,
-		"-n", namespace,
-		resource,
-		"--type", patchType,
-		"-p", patch,
-	)
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return strings.TrimSpace(stderr.String()), err
-	}
-	return strings.TrimSpace(stdout.String()), nil
+	return kubectl("", "patch", "-n", namespace, resource, "--type", patchType, "-p", patch)
 }
 
 // exitStderr returns the trimmed stderr of a failed exec.Cmd, or "" when err is not an *exec.ExitError.
