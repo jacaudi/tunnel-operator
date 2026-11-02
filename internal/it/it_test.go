@@ -261,6 +261,12 @@ var _ = Describe("wireguard controller", func() {
 		}, Timeout, Interval).Should(Succeed())
 		leakCounter()
 
+		// The kube-apiserver runs OwnerReferencesPermissionEnforcement, so the client's RBAC proof (no pods/finalizers needed)
+		// is real: the peer's controller owner reference would be refused without it.
+		apiserverArgs, err := kubectl("", "get", "pods", "-n", "kube-system", "-l", "component=kube-apiserver", "-o", "jsonpath={.items[0].spec.containers[0].command}")
+		Expect(err).NotTo(HaveOccurred(), "kube-apiserver command: %s", apiserverArgs)
+		Expect(apiserverArgs).To(ContainSubstring("OwnerReferencesPermissionEnforcement"))
+
 		By("applying examples/client.yaml and waiting for the client to register")
 		output, err = KubectlApply(clientManifests(agentImage), TestNamespace)
 		Expect(err).NotTo(HaveOccurred(), "apply the client: %s", output)
@@ -409,8 +415,10 @@ var _ = Describe("wireguard controller", func() {
 		Expect(viaRoute).To(HaveLen(2), "no `via <gateway> dev eth0` in the Service route")
 		ipv6Flag, ipv6Err := KubectlExec("pod/"+clientPod, "wg-client", TestNamespace, "cat", "/proc/sys/net/ipv6/conf/eth0/disable_ipv6")
 		ipv6 := ipv6Err == nil && ipv6Flag == "0"
-		if !ipv6 {
-			fmt.Fprintln(GinkgoWriter, "IPv6 disabled on eth0; skipping the IPv6 stray-default check")
+		if ipv6 {
+			By("scenario (g): removing an IPv6 stray default")
+		} else {
+			By(fmt.Sprintf("scenario (g): IPv6 disabled on eth0 (err=%v), skipping the IPv6 stray-default check", ipv6Err))
 		}
 		install := "ip route add default via " + viaRoute[1] + " dev eth0 metric 100"
 		if ipv6 {
