@@ -1,0 +1,25 @@
+# The permissions the client sidecar needs in a namespace whose pods attach to a Wireguard. It grants
+# nothing until it is bound there: create a RoleBinding to it for the pods' ServiceAccount.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: operator-client
+rules:
+- apiGroups:
+  - vpn.wireguard-operator.io
+  resources:
+  - wireguardpeers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - watch
+- apiGroups:
+  - vpn.wireguard-operator.io
+  resources:
+  - wireguards
+  verbs:
+  - get
+  - list
+  - watch

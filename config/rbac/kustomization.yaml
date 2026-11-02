@@ -13,3 +13,4 @@ resources:
 - metrics_reader_clusterrole.yaml
 - metrics_reader_serviceaccount.yaml
 - metrics_reader_rolebinding.yaml
+- client_clusterrole.yaml

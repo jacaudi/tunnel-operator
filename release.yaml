@@ -780,6 +780,30 @@ rules:
   - get
 ---
 apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: wireguard-operator-client
+rules:
+- apiGroups:
+  - vpn.wireguard-operator.io
+  resources:
+  - wireguardpeers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - watch
+- apiGroups:
+  - vpn.wireguard-operator.io
+  resources:
+  - wireguards
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: wireguard-leader-election-rolebinding
