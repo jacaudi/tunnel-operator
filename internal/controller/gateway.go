@@ -1,0 +1,96 @@
+package controllers
+
+import (
+	"fmt"
+	"net/netip"
+	"slices"
+
+	"github.com/jacaudi/wireguard-operator/internal/resources"
+
+	corev1 "k8s.io/api/core/v1"
+)
+
+// Degraded reasons the operator records on a Wireguard whose spec it cannot render.
+const (
+	// ReasonInvalidPeerCIDR: spec.peerCIDR is not a canonical IPv4 prefix of /30 or shorter.
+	ReasonInvalidPeerCIDR = "InvalidPeerCIDR"
+	// ReasonInvalidLocalCIDRs: a spec.localCIDRs entry is not a canonical IPv4 prefix.
+	ReasonInvalidLocalCIDRs = "InvalidLocalCIDRs"
+	// ReasonPeerCIDROverlapsLocalCIDRs: spec.peerCIDR overlaps a spec.localCIDRs entry.
+	ReasonPeerCIDROverlapsLocalCIDRs = "PeerCIDROverlapsLocalCIDRs"
+	// ReasonClusterIPOutsideLocalCIDRs: the server Service's ClusterIP is in no spec.localCIDRs entry.
+	ReasonClusterIPOutsideLocalCIDRs = "ClusterIPOutsideLocalCIDRs"
+	// ReasonReservedGluetunEnv: spec.gluetun.env or a Secret it references sets a variable the operator renders.
+	ReasonReservedGluetunEnv = "ReservedGluetunEnv"
+)
+
+// validateLocalCIDRs returns nil when every entry is a canonical IPv4 prefix (no host bits set),
+// and an error naming the first entry that is not.
+func validateLocalCIDRs(cidrs []string) error {
+	for i, c := range cidrs {
+		p, err := netip.ParsePrefix(c)
+		if err != nil {
+			return fmt.Errorf("localCIDRs[%d] %q is not a CIDR: %w", i, c, err)
+		}
+		if !p.Addr().Is4() {
+			return fmt.Errorf("localCIDRs[%d] %q is not an IPv4 prefix", i, c)
+		}
+		if p != p.Masked() {
+			return fmt.Errorf("localCIDRs[%d] %q has host bits set; use %s", i, c, p.Masked())
+		}
+	}
+	return nil
+}
+
+// peerCIDROverlap returns an error naming the first localCIDRs entry that overlaps peerCIDR. Both
+// must already be valid.
+func peerCIDROverlap(peerCIDR string, localCIDRs []string) error {
+	// An unparseable prefix is the zero Prefix, which overlaps nothing; callers validate first.
+	peer, _ := netip.ParsePrefix(peerCIDR)
+	for i, c := range localCIDRs {
+		if local, _ := netip.ParsePrefix(c); peer.Overlaps(local) {
+			return fmt.Errorf("peerCIDR %s overlaps localCIDRs[%d] %s; peer addresses must lie outside the cluster's networks", peerCIDR, i, c)
+		}
+	}
+	return nil
+}
+
+// clusterIPOutside returns an error when clusterIP lies in no localCIDRs entry: clients route
+// everything outside localCIDRs into the tunnel, including the gateway's own Service.
+func clusterIPOutside(service, clusterIP string, localCIDRs []string) error {
+	if ip, err := netip.ParseAddr(clusterIP); err == nil {
+		for _, c := range localCIDRs {
+			if p, err := netip.ParsePrefix(c); err == nil && p.Contains(ip) {
+				return nil
+			}
+		}
+	}
+	//nolint:staticcheck // ST1005: "Service" is the Kubernetes kind, and the message is recorded verbatim as a condition message
+	return fmt.Errorf("Service %s has ClusterIP %s, which is in no localCIDRs entry; add the cluster's Service CIDR to localCIDRs", service, clusterIP)
+}
+
+// isReservedGluetunEnv reports whether the operator renders the gluetun variable name.
+func isReservedGluetunEnv(name string) bool {
+	return slices.ContainsFunc(resources.ReservedGluetunEnv(nil), func(e corev1.EnvVar) bool { return e.Name == name })
+}
+
+// reservedInEnv returns the name of the first env entry that the operator renders, or "".
+func reservedInEnv(env []corev1.EnvVar) string {
+	for _, e := range env {
+		if isReservedGluetunEnv(e.Name) {
+			return e.Name
+		}
+	}
+	return ""
+}
+
+// reservedInKeys returns prefix+key for the first key, in sorted order, whose prefixed name the
+// operator renders, or "".
+func reservedInKeys(prefix string, keys []string) string {
+	for _, k := range slices.Sorted(slices.Values(keys)) {
+		if isReservedGluetunEnv(prefix + k) {
+			return prefix + k
+		}
+	}
+	return ""
+}
