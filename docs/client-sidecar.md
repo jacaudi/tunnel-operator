@@ -47,7 +47,7 @@ table like this:
 10.244.0.0/16 via <CNI gateway> dev eth0 proto 151     # one route per entry of localCIDRs
 10.96.0.0/12  via <CNI gateway> dev eth0 proto 151
 192.168.0.0/24 via <CNI gateway> dev eth0 proto 151
-default dev wg0 scope link proto 151                   # everything else
+default dev wg0 proto 151 scope link                   # everything else
 ```
 
 - **Local traffic stays on `eth0`.** Each `localCIDRs` entry of the `Wireguard` gets a route via the
@@ -56,11 +56,15 @@ default dev wg0 scope link proto 151                   # everything else
 - **Everything else is tunnelled.** The default route is `default dev wg0`. The gateway's own
   Service is reachable because its ClusterIP is inside `localCIDRs`.
 - **No other way out.** The sidecar deletes every other IPv4 default route, and every IPv6 default
-  route. A pod with no IPv6 default route has no IPv6 internet; IPv6 is out of scope.
+  route. A pod with no IPv6 default route has no IPv6 internet; IPv6 is out of scope. In a dual-stack
+  cluster this also removes the pod's IPv6 path to other nodes' pods and to IPv6 Service IPs; only
+  on-link IPv6 keeps working.
 - **Marked routes.** Every route the sidecar installs carries rtnetlink protocol `151`. Apart
   from the default routes above, it removes only routes it installed: an entry that left
   `localCIDRs` is deleted on the next pass, and other routes the CNI installed, such as the pod
-  subnet's own, stay.
+  subnet's own, stay. The exception is a CNI route whose prefix exactly equals a `localCIDRs` entry:
+  the sidecar replaces it with its own protocol-151 route, and deletes that route if the entry later
+  leaves `localCIDRs`.
 - **Fail closed.** If `wg0` vanishes, the default route goes with it and the main table has no
   route to the internet, so the application's traffic fails instead of leaving through `eth0`.
   The next pass, within 10 seconds, recreates `wg0` and the default route.
@@ -94,7 +98,7 @@ it if it exits.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--wireguard` | — | **Required.** The name of the `Wireguard` in the pod's namespace to attach to. |
+| `--wireguard` | — | **Required** unless `--check` is given. The name of the `Wireguard` in the pod's namespace to attach to. |
 | `--check` | off | Run the [startup check](#the-startup-check) once and exit `0` if it passes, `1` with the reason on stderr if not. |
 | `-v` | `0` | Log verbosity. `1` also logs `tunnel applied` for every pass that completes. |
 
@@ -150,7 +154,8 @@ The sidecar logs to stderr. Start with `kubectl logs <pod> -c wg-client`.
   the peer's `status.address`, or the `Wireguard`'s `status.endpoint` or `status.publicKey`. The line
   names which. The first line after registering reads `waiting for the operator: WireguardPeer
   <namespace>/<name> registered`. The sidecar retries on the next change and every 10 seconds. If
-  the line stays, check `kubectl get wireguard,wireguardpeer`.
+  the line stays, check `kubectl get wireguard,wireguardpeer`. `waiting for the operator: Wireguard
+  <namespace>/<name> not found` means `--wireguard` is mistyped or the server is not created yet.
 - **`client pass failed` with `… exists and no Pod controls it`** — a `WireguardPeer` with the
   pod's name exists and was not created by a sidecar, so the sidecar will not delete it. Delete
   the peer, or give the pod another name.
@@ -166,7 +171,7 @@ The sidecar logs to stderr. Start with `kubectl logs <pod> -c wg-client`.
 
 ## Without the sidecar
 
-A client the sidecar does not serve, such as a VM or a pod you cannot add an init container to,
+A client the sidecar does not serve, such as a pod you cannot add an init container to,
 needs its own WireGuard configuration. Register a [`WireguardPeer`](crd-wireguardpeer.md) with your
 public key, wait for it to read `ready`, then build a configuration from these values. The Service
 is ClusterIP, so the client must run inside the cluster.
