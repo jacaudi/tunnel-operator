@@ -4,40 +4,30 @@
 package it
 
 import (
+	"fmt"
+
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("wireguard controller", func() {
-	It("wireguard is able to start", func() {
-		wireguardYaml :=
-			`apiVersion: vpn.wireguard-operator.io/v1alpha1
-kind: Wireguard
-metadata:
-  name: vpn
-spec: {}`
+	It("egresses a peer's traffic through gluetun and leaks nothing on eth0", func() {
+		// The fake exit node: a WireGuard peer for gluetun with a test address on its loopback behind http-echo.
+		output, err := KubectlApply(exitNodeManifests(), TestNamespace)
+		Expect(err).NotTo(HaveOccurred(), "apply the exit node: %s", output)
+		waitForDeploymentTobeReady("exit", TestNamespace, Timeout)
 
-		// kubectl apply -f
-		output, err := KubectlApply(wireguardYaml, TestNamespace)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(output).To(Equal("wireguard.vpn.wireguard-operator.io/vpn created"))
+		exitIP, err := KubectlGet("service/exit", TestNamespace, "{.spec.clusterIP}")
+		Expect(err).NotTo(HaveOccurred(), "kubectl get service/exit: %s", exitIP)
+		Expect(exitIP).NotTo(BeEmpty())
 
-		wireguardPeerYaml :=
-			`apiVersion: vpn.wireguard-operator.io/v1alpha1
-kind: WireguardPeer
-metadata:
-  name: peer20
-spec:
-  wireguardRef: "vpn"
-  publicKey: "PLA+byaz6a5jbnioieB4NEELG7sdq7Wk+3u9Kw0s6zk="
+		output, err = KubectlApply(gatewayManifests(exitIP), TestNamespace)
+		Expect(err).NotTo(HaveOccurred(), "apply the gateway: %s", output)
+		output, err = KubectlApply(testPeerManifests(), TestNamespace)
+		Expect(err).NotTo(HaveOccurred(), "apply the peer: %s", output)
 
-`
-		// kubectl apply -f
-		output, err = KubectlApply(wireguardPeerYaml, TestNamespace)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(output).To(Equal("wireguardpeer.vpn.wireguard-operator.io/peer20 created"))
-
-		WaitForWireguardToBeReady("vpn", TestNamespace)
+		// Ready now includes gluetun being healthy through its tunnel to the exit node.
+		WaitForWireguardToBeReady("vpn", TestNamespace, GatewayTimeout)
 		WaitForPeerToBeReady("peer20", TestNamespace)
 
 		// The controller allocated the peer an address from the server's peerCIDR.
@@ -58,10 +48,81 @@ spec:
 
 		// The agent's wg0 admitted the peer, so the controller's state reached the agent.
 		Eventually(func(g Gomega) {
-			peers, err := KubectlExec("vpn-dep", "agent", TestNamespace, "wg", "show", "wg0", "peers")
+			peers, err := KubectlExec("deploy/vpn-dep", "agent", TestNamespace, "wg", "show", "wg0", "peers")
 			g.Expect(err).NotTo(HaveOccurred(), "wg show wg0 peers in vpn-dep: %s", peers)
-			g.Expect(peers).To(ContainSubstring("PLA+byaz6a5jbnioieB4NEELG7sdq7Wk+3u9Kw0s6zk="))
+			g.Expect(peers).To(ContainSubstring(testPeerPublicKey))
 		}, Timeout, Interval).Should(Succeed())
+
+		// The agent installed the fail-closed datapath: both ip rules, both one-route tables, and the
+		// forwarding, masquerade and MSS rules.
+		inAgent := func(g Gomega, command ...string) string {
+			out, err := KubectlExec("deploy/vpn-dep", "agent", TestNamespace, command...)
+			g.Expect(err).NotTo(HaveOccurred(), "%v in vpn-dep: %s", command, out)
+			return out
+		}
+		Eventually(func(g Gomega) {
+			rules := inAgent(g, "ip", "rule", "show")
+			g.Expect(rules).To(MatchRegexp(`(?m)^90:\s+from all to 10\.8\.0\.0/24 lookup 51821$`))
+			g.Expect(rules).To(MatchRegexp(`(?m)^102:\s+from all iif wg0 lookup 51822$`))
+		}, Timeout, Interval).Should(Succeed())
+		Eventually(func(g Gomega) {
+			g.Expect(inAgent(g, "ip", "route", "show", "table", "51821")).To(ContainSubstring("10.8.0.0/24 dev wg0"))
+		}, Timeout, Interval).Should(Succeed())
+		Eventually(func(g Gomega) {
+			g.Expect(inAgent(g, "ip", "route", "show", "table", "51822")).To(ContainSubstring("blackhole default"))
+		}, Timeout, Interval).Should(Succeed())
+		Eventually(func(g Gomega) {
+			forward := inAgent(g, "iptables", "-S", "FORWARD")
+			g.Expect(forward).To(ContainSubstring("-P FORWARD DROP"))
+			g.Expect(forward).To(ContainSubstring("-A FORWARD -s 10.8.0.0/24 -i wg0 -o tun0 -j ACCEPT"))
+			g.Expect(forward).To(ContainSubstring("-A FORWARD -i tun0 -o wg0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"))
+		}, Timeout, Interval).Should(Succeed())
+		Eventually(func(g Gomega) {
+			g.Expect(inAgent(g, "iptables", "-t", "nat", "-S", "POSTROUTING")).To(ContainSubstring("-A POSTROUTING -s 10.8.0.0/24 -o tun0 -j MASQUERADE"))
+		}, Timeout, Interval).Should(Succeed())
+		Eventually(func(g Gomega) {
+			g.Expect(inAgent(g, "iptables", "-t", "mangle", "-S", "FORWARD")).To(ContainSubstring("-A FORWARD -o tun0 -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"))
+		}, Timeout, Interval).Should(Succeed())
+
+		// The leak counter: a rule that matches peer traffic leaving on eth0 and does nothing else.
+		// A fail-closed gateway never lets a packet reach it.
+		out, err := KubectlExec("deploy/vpn-dep", "agent", TestNamespace, "iptables", "-t", "mangle", "-A", "POSTROUTING", "-o", "eth0", "-s", "10.8.0.0/24")
+		Expect(err).NotTo(HaveOccurred(), "add the leak counter: %s", out)
+
+		// A hand-configured peer with the address the controller allocated to peer20.
+		publicKey, err := KubectlGet("wireguard/vpn", TestNamespace, "{.status.publicKey}")
+		Expect(err).NotTo(HaveOccurred(), "kubectl get wireguard/vpn: %s", publicKey)
+		endpoint, err := KubectlGet("wireguard/vpn", TestNamespace, "{.status.endpoint}")
+		Expect(err).NotTo(HaveOccurred(), "kubectl get wireguard/vpn: %s", endpoint)
+		output, err = KubectlApply(testPeerPod("10.8.0.2", publicKey, endpoint), TestNamespace)
+		Expect(err).NotTo(HaveOccurred(), "apply the test peer pod: %s", output)
+		Eventually(func(g Gomega) {
+			phase, err := KubectlGet("pod/tpeer", TestNamespace, "{.status.phase}")
+			g.Expect(err).NotTo(HaveOccurred(), "kubectl get pod/tpeer: %s", phase)
+			g.Expect(phase).To(Equal("Running"))
+		}, Timeout, Interval).Should(Succeed())
+
+		// The peer reaches the exit node's test address through the gateway and gluetun's tunnel. The
+		// first fetch waits out the peer's handshake and the container start.
+		fetch := func() (string, error) {
+			return KubectlExec("pod/tpeer", "curl", TestNamespace, "curl", "-sS", "--max-time", "5", fmt.Sprintf("http://%s:%d/", exitAddress, exitHTTPPort))
+		}
+		Eventually(func(g Gomega) {
+			body, err := fetch()
+			g.Expect(err).NotTo(HaveOccurred(), "curl %s:%d from tpeer: %s", exitAddress, exitHTTPPort, body)
+			g.Expect(body).To(Equal("exit"))
+		}, GatewayTimeout, Interval).Should(Succeed())
+		for range 5 {
+			body, err := fetch()
+			Expect(err).NotTo(HaveOccurred(), "curl %s:%d from tpeer: %s", exitAddress, exitHTTPPort, body)
+			Expect(body).To(Equal("exit"))
+		}
+
+		// None of that traffic left the gateway on eth0.
+		save, err := KubectlExec("deploy/vpn-dep", "agent", TestNamespace, "iptables-save", "-c", "-t", "mangle")
+		Expect(err).NotTo(HaveOccurred(), "iptables-save in vpn-dep: %s", save)
+		line := leakCounterLine(save)
+		Expect(line).To(HavePrefix("[0:0] "), "leak counter: %q", line)
 	})
 
 	It("exposes controller manager metrics", func() {
