@@ -16,10 +16,15 @@ import (
 	"github.com/jacaudi/wireguard-operator/internal/agent"
 	"github.com/jacaudi/wireguard-operator/internal/datapath"
 	"github.com/jacaudi/wireguard-operator/internal/resources"
+	"github.com/jacaudi/wireguard-operator/internal/sidecar"
 	"github.com/jacaudi/wireguard-operator/internal/wireguard"
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "client" {
+		os.Exit(runClient(os.Args[2:]))
+	}
+
 	var configFilePath string
 	var iface string
 	var verbosity int
@@ -195,4 +200,43 @@ func reassert(ctx context.Context, dp *datapath.Datapath, statePath string, logg
 			logger.Error(err, "Error while re-asserting the datapath")
 		}
 	}
+}
+
+// runClient runs `agent client`: the startup check with --check, otherwise the client sidecar. It
+// returns the process exit code: 0 on success or a clean shutdown, 1 on failure, 2 on a usage error.
+func runClient(args []string) int {
+	var wireguardName string
+	var check bool
+	var verbosity int
+	fs := flag.NewFlagSet("client", flag.ContinueOnError)
+	fs.StringVar(&wireguardName, "wireguard", "", "the Wireguard in this pod's namespace to attach to")
+	fs.BoolVar(&check, "check", false, "run the startup check and exit")
+	fs.IntVar(&verbosity, "v", 0, "the verbosity level; 1 also logs every applied pass")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	stdr.SetVerbosity(verbosity)
+	logger := stdr.NewWithOptions(log.New(os.Stderr, "", log.LstdFlags), stdr.Options{LogCaller: stdr.All}).WithName("client")
+
+	if check {
+		if err := sidecar.Check(resources.WgInterface); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	}
+
+	cfg, err := sidecar.ConfigFromEnv(wireguardName, sidecar.DefaultKeyPath, os.Getenv)
+	if err != nil {
+		logger.Error(err, "invalid configuration")
+		return 1
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+	if err := sidecar.Run(ctx, cfg, logger); err != nil {
+		logger.Error(err, "client stopped")
+		return 1
+	}
+	return 0
 }
