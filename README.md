@@ -3,8 +3,8 @@
 A Kubernetes operator that runs a WireGuard server inside your cluster and admits pods to it by
 public key, declaratively. It is the base of an in-cluster VPN gateway: application pods tunnel to
 the server, and the server egresses through [gluetun](https://github.com/qdm12/gluetun) to a
-commercial VPN provider. The server, peer registration and the gluetun egress work today; the in-pod
-client is designed, not yet implemented.
+commercial VPN provider. The server, peer registration, the gluetun egress and the in-pod
+client all work today.
 
 This is a fork of [jodevsa/wireguard-operator](https://github.com/jodevsa/wireguard-operator) that
 trims it to an in-cluster gateway — no LoadBalancer or NodePort Service, no wstunnel, no IPv6, no
@@ -34,15 +34,15 @@ through a ClusterIP Service.
   falls back to [wireguard-go](https://github.com/WireGuard/wireguard-go) when it does not.
 - **Egress through gluetun** — the server pod forwards peer traffic into a gluetun container and
   fails closed when the tunnel drops. See [docs/gluetun-egress.md](docs/gluetun-egress.md).
-- **Client sidecar** *(designed, not yet implemented)* — a native sidecar that mints a key inside
-  the application pod, registers it, and routes the pod's internet traffic through the server.
-  See [docs/client-sidecar.md](docs/client-sidecar.md).
+- **Client sidecar** — a native sidecar that mints a key inside the application pod, registers it,
+  and routes the pod's internet traffic through the server. See
+  [docs/client-sidecar.md](docs/client-sidecar.md).
 
 See [`docs/architecture.md`](docs/architecture.md) for how the two resources fit together.
 
 ## At a glance
 
-How traffic flows from an application pod to the VPN provider; the client sidecar is not built yet:
+How traffic flows from an application pod to the VPN provider:
 
 ![Traffic flow: app pod with wg-client sidecar, ClusterIP Service, WireGuard server with gluetun, VPN provider, internet](docs/images/01-traffic-flow.svg)
 
@@ -114,9 +114,10 @@ spec:
   publicKey: "<public key>"  # the output of wg pubkey above
 ```
 
-The operator does not run a client for you yet. Keep `peer.key` and configure a WireGuard client
-yourself with the values in
-[Client sidecar — Today](docs/client-sidecar.md#today-configure-the-client-yourself).
+To attach an application pod, apply `examples/client.yaml` (see
+[Client sidecar](docs/client-sidecar.md)). For a client that is not a pod, keep `peer.key` and
+configure WireGuard yourself with the values in
+[Client sidecar — Without the sidecar](docs/client-sidecar.md#without-the-sidecar).
 
 **4. Check status.**
 
@@ -173,7 +174,7 @@ Full docs live in [`docs/`](docs/):
 - [Installation](docs/installation.md) · [Architecture](docs/architecture.md)
 - [`Wireguard`](docs/crd-wireguard.md) · [`WireguardPeer`](docs/crd-wireguardpeer.md) references
 - [Gluetun egress](docs/gluetun-egress.md)
-- [Client sidecar](docs/client-sidecar.md) — designed, not yet implemented
+- [Client sidecar](docs/client-sidecar.md)
 - [Upgrading from upstream](docs/upgrading-from-upstream.md) · [Examples](examples/)
 
 ## Acknowledgements

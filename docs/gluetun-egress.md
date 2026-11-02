@@ -5,10 +5,7 @@ two share one network namespace, so peer traffic arriving on `wg0` is forwarded 
 `tun0` and on to your VPN provider. Peer traffic never leaves the pod any other way: with the tunnel
 down it is dropped, not sent out of `eth0`.
 
-> **The in-pod client is not built yet.** The server side described here works, but nothing
-> creates the client end for you. Today only a peer you configure by hand can use the gateway; see
-> [client-sidecar.md](client-sidecar.md). Tracked in
-> [#32](https://github.com/jacaudi/wireguard-operator/issues/32).
+The client end of the tunnel is the [client sidecar](client-sidecar.md).
 
 See [`examples/01-server.yaml`](../examples/01-server.yaml) for a `Wireguard` with its provider
 Secret.

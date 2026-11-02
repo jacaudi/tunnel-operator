@@ -12,7 +12,7 @@ New here? Start with the [Quick start in the root README](../README.md#quick-sta
 | [`Wireguard` reference](crd-wireguard.md) | Server CRD: spec, status, conditions, owned objects, lifecycle |
 | [`WireguardPeer` reference](crd-wireguardpeer.md) | Peer CRD: spec, status, conditions, lifecycle |
 | [Gluetun egress](gluetun-egress.md) | Server egress through a gluetun container: configuration, `localCIDRs`, fail-closed routing, readiness |
-| [Client sidecar](client-sidecar.md) | In-pod WireGuard client — **designed, not yet implemented** |
+| [Client sidecar](client-sidecar.md) | The in-pod WireGuard client: what it does, the pod spec, routing, the startup check, troubleshooting |
 | [Upgrading from upstream](upgrading-from-upstream.md) | What this fork removed from jodevsa/wireguard-operator and what to do instead |
 | [Examples](../examples/) | Runnable sample manifests |
 
@@ -27,11 +27,12 @@ New here? Start with the [Quick start in the root README](../README.md#quick-sta
 - **Egress through gluetun** — the server pod runs a gluetun container, forwards peer traffic into
   its tunnel and fails closed by routing; `Ready` waits for gluetun to be healthy. See
   [gluetun-egress.md](gluetun-egress.md).
+- **Client sidecar** — an init container with `restartPolicy: Always` that registers its pod as a
+  `WireguardPeer`, configures `wg0` from the server's status and routes the pod's internet traffic
+  through it. See [client-sidecar.md](client-sidecar.md).
 
 ## Not yet implemented (designed)
 
-- **Client sidecar** — see [client-sidecar.md](client-sidecar.md). Tracked in
-  [#32](https://github.com/jacaudi/wireguard-operator/issues/32).
 - **OCI Helm chart** — see [installation.md](installation.md#install-with-helm-oci). Tracked in
   [#48](https://github.com/jacaudi/wireguard-operator/issues/48).
 
