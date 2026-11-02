@@ -97,7 +97,7 @@ The gateway fails closed by **routing** rather than by firewall rules alone:
   tunnel hits a blackhole route instead of the pod's default route, and peer traffic is
   masqueraded into gluetun's tunnel, never out of `eth0`. See
   [gluetun-egress.md](gluetun-egress.md#fail-closed-by-routing).
-- **Client side (implemented)** — the sidecar replaces the pod's default route
+- **Client side** — the sidecar replaces the pod's default route
   with `wg0` and keeps only the cluster CIDRs on `eth0`, so a missing tunnel means no route to the
   internet, not a direct one.
 

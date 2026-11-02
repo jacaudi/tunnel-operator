@@ -57,9 +57,10 @@ default dev wg0 scope link proto 151                   # everything else
   Service is reachable because its ClusterIP is inside `localCIDRs`.
 - **No other way out.** The sidecar deletes every other IPv4 default route, and every IPv6 default
   route. A pod with no IPv6 default route has no IPv6 internet; IPv6 is out of scope.
-- **Marked routes.** Every route the sidecar installs carries rtnetlink protocol `151`. It
-  removes only routes it installed: an entry that left `localCIDRs` is deleted on the next pass,
-  and routes the CNI installed, such as the pod subnet's own, stay.
+- **Marked routes.** Every route the sidecar installs carries rtnetlink protocol `151`. Apart
+  from the default routes above, it removes only routes it installed: an entry that left
+  `localCIDRs` is deleted on the next pass, and other routes the CNI installed, such as the pod
+  subnet's own, stay.
 - **Fail closed.** If `wg0` vanishes, the default route goes with it and the main table has no
   route to the internet, so the application's traffic fails instead of leaving through `eth0`.
   The next pass, within 10 seconds, recreates `wg0` and the default route.
