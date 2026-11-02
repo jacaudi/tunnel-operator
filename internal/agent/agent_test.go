@@ -146,3 +146,23 @@ func TestGetDesiredStateReportsMissingFile(t *testing.T) {
 		t.Error("expected an error for a missing state file, got nil")
 	}
 }
+
+func TestPeerCIDR(t *testing.T) {
+	tests := []struct {
+		name string
+		cidr string
+		want string
+	}{
+		{"empty falls back to the default", "", "10.8.0.0/24"},
+		{"set is returned as is", "10.9.0.0/24", "10.9.0.0/24"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var state State
+			state.Server.Spec.PeerCIDR = tt.cidr
+			if got := PeerCIDR(state); got != tt.want {
+				t.Errorf("PeerCIDR = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

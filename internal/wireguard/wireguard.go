@@ -14,7 +14,6 @@ import (
 
 	"github.com/jacaudi/wireguard-operator/api/v1alpha1"
 	"github.com/jacaudi/wireguard-operator/internal/agent"
-	"github.com/jacaudi/wireguard-operator/internal/ipam"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 	"golang.zx2c4.com/wireguard/wgctrl"
@@ -257,10 +256,7 @@ func (wg *Wireguard) Sync(state agent.State) error {
 		return err
 	}
 
-	cidr4 := state.Server.Spec.PeerCIDR
-	if cidr4 == "" {
-		cidr4 = ipam.DefaultPeerCIDR4
-	}
+	cidr4 := agent.PeerCIDR(state)
 	prefix4, err := netip.ParsePrefix(cidr4)
 	if err != nil {
 		return fmt.Errorf("failed to parse IPv4 CIDR %q: %w", cidr4, err)

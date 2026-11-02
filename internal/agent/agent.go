@@ -12,12 +12,21 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/jacaudi/wireguard-operator/api/v1alpha1"
+	"github.com/jacaudi/wireguard-operator/internal/ipam"
 )
 
 type State struct {
 	Server           v1alpha1.Wireguard
 	ServerPrivateKey string
 	Peers            []v1alpha1.WireguardPeer
+}
+
+// PeerCIDR returns the server's peerCIDR from state, or ipam.DefaultPeerCIDR4 when it is empty.
+func PeerCIDR(state State) string {
+	if state.Server.Spec.PeerCIDR == "" {
+		return ipam.DefaultPeerCIDR4
+	}
+	return state.Server.Spec.PeerCIDR
 }
 
 func IsStateValid(state State) error {
