@@ -1,0 +1,144 @@
+package sidecar
+
+import (
+	"errors"
+	"fmt"
+	"net"
+	"net/netip"
+	"time"
+
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+
+	"github.com/jacaudi/wireguard-operator/api/v1alpha1"
+	"github.com/jacaudi/wireguard-operator/internal/resources"
+)
+
+// errWaiting marks a configuration the operator has not finished publishing yet.
+var errWaiting = errors.New("waiting for the operator")
+
+// Tunnel is the client's WireGuard configuration, read from its WireguardPeer and the Wireguard.
+type Tunnel struct {
+	Address    netip.Prefix   // the peer's status.address, as a /32
+	ServerKey  wgtypes.Key    // the Wireguard's status.publicKey
+	Endpoint   netip.AddrPort // the Wireguard's status.endpoint
+	LocalCIDRs []netip.Prefix // the Wireguard's spec.localCIDRs, masked, in spec order
+}
+
+// desiredTunnel returns the Tunnel for peer and wg. While peer has no status.address or wg has no
+// status.endpoint or status.publicKey it returns an error wrapping errWaiting; a value that does not
+// parse, or an empty spec.localCIDRs, is a plain error.
+func desiredTunnel(peer *v1alpha1.WireguardPeer, wg *v1alpha1.Wireguard) (Tunnel, error) {
+	switch {
+	case peer.Status.Address == "":
+		return Tunnel{}, fmt.Errorf("%w: WireguardPeer %s has no status.address", errWaiting, peer.Name)
+	case wg.Status.Endpoint == "":
+		return Tunnel{}, fmt.Errorf("%w: Wireguard %s has no status.endpoint", errWaiting, wg.Name)
+	case wg.Status.PublicKey == "":
+		return Tunnel{}, fmt.Errorf("%w: Wireguard %s has no status.publicKey", errWaiting, wg.Name)
+	}
+
+	addr, err := netip.ParseAddr(peer.Status.Address)
+	if err != nil {
+		return Tunnel{}, fmt.Errorf("parse status.address %q of WireguardPeer %s: %w", peer.Status.Address, peer.Name, err)
+	}
+	if !addr.Is4() {
+		return Tunnel{}, fmt.Errorf("status.address %q of WireguardPeer %s is not IPv4", peer.Status.Address, peer.Name)
+	}
+	endpoint, err := netip.ParseAddrPort(wg.Status.Endpoint)
+	if err != nil {
+		return Tunnel{}, fmt.Errorf("parse status.endpoint %q of Wireguard %s: %w", wg.Status.Endpoint, wg.Name, err)
+	}
+	serverKey, err := wgtypes.ParseKey(wg.Status.PublicKey)
+	if err != nil {
+		return Tunnel{}, fmt.Errorf("parse status.publicKey of Wireguard %s: %w", wg.Name, err)
+	}
+	cidrs, err := parseLocalCIDRs(wg)
+	if err != nil {
+		return Tunnel{}, err
+	}
+
+	return Tunnel{
+		Address:    netip.PrefixFrom(addr, 32),
+		ServerKey:  serverKey,
+		Endpoint:   endpoint,
+		LocalCIDRs: cidrs,
+	}, nil
+}
+
+// parseLocalCIDRs returns wg's spec.localCIDRs, masked, in spec order.
+func parseLocalCIDRs(wg *v1alpha1.Wireguard) ([]netip.Prefix, error) {
+	if len(wg.Spec.LocalCIDRs) == 0 {
+		//nolint:staticcheck // ST1005: the message starts with the Kubernetes kind the user sees
+		return nil, fmt.Errorf("Wireguard %s has no spec.localCIDRs", wg.Name)
+	}
+	cidrs := make([]netip.Prefix, 0, len(wg.Spec.LocalCIDRs))
+	for _, c := range wg.Spec.LocalCIDRs {
+		p, err := netip.ParsePrefix(c)
+		if err != nil {
+			return nil, fmt.Errorf("parse spec.localCIDRs entry %q of Wireguard %s: %w", c, wg.Name, err)
+		}
+		if p.Bits() == 0 {
+			return nil, fmt.Errorf("spec.localCIDRs entry %q of Wireguard %s covers every address, so nothing would go through the tunnel", c, wg.Name)
+		}
+		cidrs = append(cidrs, p.Masked())
+	}
+	return cidrs, nil
+}
+
+// deviceConfig returns the configuration that gives dev (nil when the device has no state yet) the
+// private key key and exactly one peer for t: the server's key, t.Endpoint, AllowedIPs 0.0.0.0/0 and
+// resources.Keepalive. It returns false when dev already matches, so a pass never resets a live session.
+func deviceConfig(dev *wgtypes.Device, key wgtypes.Key, t Tunnel) (wgtypes.Config, bool) {
+	allowed := []net.IPNet{{IP: net.IPv4zero.To4(), Mask: net.CIDRMask(0, 32)}}
+	if deviceMatches(dev, key, t, allowed) {
+		return wgtypes.Config{}, false
+	}
+	return wgtypes.Config{
+		PrivateKey:   &key,
+		ReplacePeers: true,
+		Peers: []wgtypes.PeerConfig{{
+			PublicKey:                   t.ServerKey,
+			Endpoint:                    net.UDPAddrFromAddrPort(t.Endpoint),
+			PersistentKeepaliveInterval: new(resources.Keepalive),
+			ReplaceAllowedIPs:           true,
+			AllowedIPs:                  allowed,
+		}},
+	}, true
+}
+
+// deviceMatches reports whether dev already has private key key and exactly the one peer deviceConfig
+// would give it.
+func deviceMatches(dev *wgtypes.Device, key wgtypes.Key, t Tunnel, allowed []net.IPNet) bool {
+	if dev == nil || dev.PrivateKey != key || len(dev.Peers) != 1 {
+		return false
+	}
+	p := dev.Peers[0]
+	if p.PublicKey != t.ServerKey || p.Endpoint == nil || p.PersistentKeepaliveInterval != resources.Keepalive {
+		return false
+	}
+	ap := p.Endpoint.AddrPort()
+	if netip.AddrPortFrom(ap.Addr().Unmap(), ap.Port()) != t.Endpoint {
+		return false
+	}
+	return len(p.AllowedIPs) == 1 && p.AllowedIPs[0].String() == allowed[0].String()
+}
+
+// handshakeMaxAge is how old the last handshake may be for the startup check: WireGuard rejects a
+// session older than 180 s.
+const handshakeMaxAge = 180 * time.Second
+
+// checkDevice returns nil when dev has exactly one peer whose last handshake is less than
+// handshakeMaxAge old at now, and an error naming what is missing otherwise.
+func checkDevice(dev *wgtypes.Device, now time.Time) error {
+	if n := len(dev.Peers); n != 1 {
+		return fmt.Errorf("%s has %d peers, want 1", dev.Name, n)
+	}
+	last := dev.Peers[0].LastHandshakeTime
+	if last.IsZero() {
+		return fmt.Errorf("%s has not completed a handshake with its peer", dev.Name)
+	}
+	if age := now.Sub(last); age >= handshakeMaxAge {
+		return fmt.Errorf("%s's last handshake was %s ago, more than %s", dev.Name, age.Round(time.Second), handshakeMaxAge)
+	}
+	return nil
+}

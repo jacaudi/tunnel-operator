@@ -17,6 +17,9 @@ const (
 	// TunnelMTU is the MTU of gluetun's tunnel (gluetun's own v3.41 default, pinned because later
 	// versions default to path-MTU discovery).
 	TunnelMTU = 1320
+	// Keepalive is the client's persistent keepalive: it keeps the client's conntrack and kube-proxy state
+	// for the server's ClusterIP alive and starts the first handshake as soon as the peer is configured.
+	Keepalive = 25 * time.Second
 	// GluetunHealthAddress is where gluetun's health server listens; the agent's /health polls it.
 	GluetunHealthAddress = "127.0.0.1:9999"
 	// GluetunImage is the gluetun release the operator runs, pinned by digest.
