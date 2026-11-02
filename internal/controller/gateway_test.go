@@ -6,7 +6,9 @@ import (
 
 	"github.com/jacaudi/wireguard-operator/internal/resources"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestValidateLocalCIDRs(t *testing.T) {
@@ -152,4 +154,54 @@ func errText(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+func TestRolloutProblem(t *testing.T) {
+	one := int32(1)
+	tests := []struct {
+		name     string
+		replicas *int32
+		status   appsv1.DeploymentStatus
+		want     string
+	}{
+		{
+			name: "generation not observed", replicas: &one,
+			status: appsv1.DeploymentStatus{ObservedGeneration: 1, UpdatedReplicas: 1, ReadyReplicas: 1},
+			want:   "Deployment vpn-dep is not rolled out: generation 2 not yet observed",
+		},
+		{
+			name: "not updated", replicas: &one,
+			status: appsv1.DeploymentStatus{ObservedGeneration: 2, UpdatedReplicas: 0, ReadyReplicas: 1},
+			want:   "Deployment vpn-dep is not rolled out: 1/1 ready, 0/1 updated",
+		},
+		{
+			name: "not ready", replicas: &one,
+			status: appsv1.DeploymentStatus{ObservedGeneration: 2, UpdatedReplicas: 1, ReadyReplicas: 0},
+			want:   "Deployment vpn-dep is not rolled out: 0/1 ready, 1/1 updated",
+		},
+		{
+			name: "rolled out", replicas: &one,
+			status: appsv1.DeploymentStatus{ObservedGeneration: 2, UpdatedReplicas: 1, ReadyReplicas: 1},
+		},
+		{
+			name: "observed generation ahead", replicas: &one,
+			status: appsv1.DeploymentStatus{ObservedGeneration: 3, UpdatedReplicas: 1, ReadyReplicas: 1},
+		},
+		{
+			name:   "unset replicas default to 1",
+			status: appsv1.DeploymentStatus{ObservedGeneration: 2, UpdatedReplicas: 1, ReadyReplicas: 1},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dep := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{Name: "vpn-dep", Generation: 2},
+				Spec:       appsv1.DeploymentSpec{Replicas: tt.replicas},
+				Status:     tt.status,
+			}
+			if got := rolloutProblem(dep); got != tt.want {
+				t.Errorf("rolloutProblem() = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/jacaudi/wireguard-operator/internal/resources"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -22,6 +23,12 @@ const (
 	ReasonClusterIPOutsideLocalCIDRs = "ClusterIPOutsideLocalCIDRs"
 	// ReasonReservedGluetunEnv: spec.gluetun.env or a Secret it references sets a variable the operator renders.
 	ReasonReservedGluetunEnv = "ReservedGluetunEnv"
+)
+
+// Ready=False reasons the operator records on a Wireguard.
+const (
+	// ReasonDeploymentNotReady: the Deployment rendered from this generation has not rolled out.
+	ReasonDeploymentNotReady = "DeploymentNotReady"
 )
 
 // validateLocalCIDRs returns nil when every entry is a canonical IPv4 prefix (no host bits set),
@@ -91,6 +98,23 @@ func reservedInKeys(prefix string, keys []string) string {
 		if isReservedGluetunEnv(prefix + k) {
 			return prefix + k
 		}
+	}
+	return ""
+}
+
+// rolloutProblem returns "" when dep has rolled out the spec it carries: the Deployment controller
+// has observed its generation, and its updated and ready replicas both equal spec.replicas (1 when
+// unset). Otherwise it returns why not.
+func rolloutProblem(dep *appsv1.Deployment) string {
+	if dep.Status.ObservedGeneration < dep.Generation {
+		return fmt.Sprintf("Deployment %s is not rolled out: generation %d not yet observed", dep.Name, dep.Generation)
+	}
+	want := int32(1)
+	if dep.Spec.Replicas != nil {
+		want = *dep.Spec.Replicas
+	}
+	if ready, updated := dep.Status.ReadyReplicas, dep.Status.UpdatedReplicas; ready != want || updated != want {
+		return fmt.Sprintf("Deployment %s is not rolled out: %d/%d ready, %d/%d updated", dep.Name, ready, want, updated, want)
 	}
 	return ""
 }
