@@ -93,7 +93,7 @@ in [gluetun-egress.md](gluetun-egress.md).
 
 The gateway fails closed by **routing** rather than by firewall rules alone:
 
-- **Server side (implemented)** — traffic arriving on `wg0` that has no route through gluetun's
+- **Server side** — traffic arriving on `wg0` that has no route through gluetun's
   tunnel hits a blackhole route instead of the pod's default route, and peer traffic is
   masqueraded into gluetun's tunnel, never out of `eth0`. See
   [gluetun-egress.md](gluetun-egress.md#fail-closed-by-routing).
