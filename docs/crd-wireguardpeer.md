@@ -8,6 +8,10 @@ allocates the peer an address and the server's agent adds it to `wg0`. **Namespa
 Source of truth: [`api/v1alpha1/wireguardpeer_types.go`](../api/v1alpha1/wireguardpeer_types.go).
 See [`examples/02-peer.yaml`](../examples/02-peer.yaml).
 
+A [client sidecar](client-sidecar.md) creates its peer itself, named after its pod, with the pod as
+its controller owner, so deleting the pod deletes the peer. A peer created by hand still works for
+a hand-configured client.
+
 ## Spec
 
 | Field | Type | Default | Description |
@@ -15,8 +19,9 @@ See [`examples/02-peer.yaml`](../examples/02-peer.yaml).
 | `wireguardRef` | string | — | **Required**, minimum length 1. The name of the `Wireguard` this peer belongs to, in the peer's own namespace. |
 | `publicKey` | string | — | The peer's WireGuard public key, as printed by `wg pubkey`. Validated at admission as a canonical 32-byte base64 WireGuard key. To register a peer without a key, omit the field: an explicit `""` is rejected. Without a key the peer gets no address and the server does not admit it. |
 
-> **The private key never enters the cluster.** Generate the key pair where the client runs and
-> register only the public half. The operator neither mints, stores nor reads a peer private key.
+> **The operator never mints, stores or reads a peer private key.** A client sidecar generates its
+> key inside its pod and keeps it in the pod's memory-backed volume; a hand-configured client keeps
+> it where it runs. Only the public half is registered.
 
 ## Status (operator-written)
 

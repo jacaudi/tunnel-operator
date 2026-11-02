@@ -45,7 +45,8 @@ both before upgrading. See [crd-wireguard.md](crd-wireguard.md#spec) and
 
 - **Peer configuration Secrets.** Upstream rendered `<wireguard>-peer-configs` and a
   `<peer>-peer` key Secret per peer. This fork writes neither; build the client configuration
-  yourself from [these values](client-sidecar.md#today-configure-the-client-yourself).
+  yourself from [these values](client-sidecar.md#without-the-sidecar), or run the client sidecar,
+  which needs none.
 - **Server iptables and NAT.** Upstream masqueraded peer traffic out of the server pod's `eth0`.
   This fork masquerades peer traffic into gluetun's tunnel, never out of `eth0` — see
   [gluetun-egress.md](gluetun-egress.md).

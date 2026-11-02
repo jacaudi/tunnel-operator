@@ -38,16 +38,16 @@ which holds the tunnel to the provider.
 client (your WireGuard config) ──UDP 51820──▶ <name>-svc (ClusterIP) ──▶ server pod: agent wg0 10.8.0.1 ──▶ gluetun tun0 ──▶ VPN provider
 ```
 
-What is designed: the client becomes a sidecar in the application pod, which routes the pod's
-internet traffic into the server and keeps the cluster CIDRs on `eth0`.
+The client is a sidecar in the application pod. It routes the pod's internet traffic into the
+server and keeps the cluster CIDRs on `eth0`.
 
 ```text
 app pod: app + wg-client sidecar ──wg──▶ server pod: agent wg0 ──▶ gluetun tun0 ──▶ VPN provider
           cluster CIDRs stay on eth0
 ```
 
-The sidecar is designed, not yet implemented — see [client-sidecar.md](client-sidecar.md). The
-gluetun hop is described in [gluetun-egress.md](gluetun-egress.md).
+The sidecar is described in [client-sidecar.md](client-sidecar.md). The gluetun hop is described
+in [gluetun-egress.md](gluetun-egress.md).
 
 ## The server pod
 
@@ -97,7 +97,7 @@ The gateway fails closed by **routing** rather than by firewall rules alone:
   tunnel hits a blackhole route instead of the pod's default route, and peer traffic is
   masqueraded into gluetun's tunnel, never out of `eth0`. See
   [gluetun-egress.md](gluetun-egress.md#fail-closed-by-routing).
-- **Client side (designed, not yet implemented)** — the sidecar replaces the pod's default route
+- **Client side (implemented)** — the sidecar replaces the pod's default route
   with `wg0` and keeps only the cluster CIDRs on `eth0`, so a missing tunnel means no route to the
   internet, not a direct one.
 
