@@ -146,6 +146,12 @@ func main() {
 			return
 		}
 
+		if err := datapath.CheckPeerPath(agent.PeerCIDR(state)); err != nil {
+			httpLog.Error(err, "agent is not ready as peer traffic would not reach the tunnel")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+
 		if err := agent.GluetunHealthy(r.Context(), gluetunClient, gluetunHealthURL); err != nil {
 			httpLog.Error(err, "agent is not ready as gluetun is not healthy")
 			w.WriteHeader(http.StatusServiceUnavailable)
