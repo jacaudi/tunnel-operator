@@ -344,16 +344,24 @@ var _ = Describe("wireguard controller", func() {
 		appFetchesExit(GatewayTimeout)
 
 		By("scenario (c): gluetun's firewall is rolled back and its tunnel rule is gone")
-		// gluetun's disable() IPv4 commands, plus the tunnel rule. Scenario (d) restores both.
+		// gluetun's disable() IPv4 commands, plus the tunnel rule. Scenario (c) restores the tunnel rule;
+		// scenario (d)'s pod replacement restores gluetun's firewall.
 		// The gateway must then read Ready=False: gluetun's own health check still passes, so only the agent's peer-path check can drop it.
+		brokeAt := time.Now()
 		vpnAgent(Default, "sh", "-c", "iptables -F && iptables -X && iptables -P INPUT ACCEPT && iptables -P OUTPUT ACCEPT && iptables -P FORWARD ACCEPT && ip rule del pref 101")
 		route, err := KubectlExec("deploy/vpn-dep", "agent", TestNamespace, "ip", "route", "get", exitAddress, "from", clientAddress, "iif", "wg0")
 		Expect(err).To(HaveOccurred(), "ip route get without rule 101 returned a route: %s", route)
 		Expect(route).To(ContainSubstring("Invalid argument"))
+		// These run before the probe can fail three times, so they cross the gateway's rolled-back datapath.
+		for range 3 {
+			body, err := appFetch()
+			expectNeverNode(Default, body, err)
+		}
+		expectNoLeak(Default)
 		Eventually(func(g Gomega) {
 			g.Expect(get(g, "wireguard/vpn", `{.status.conditions[?(@.type=="Ready")].status}`)).To(Equal("False"))
 			g.Expect(get(g, "wireguard/vpn", `{.status.conditions[?(@.type=="Ready")].reason}`)).To(Equal("DeploymentNotReady"))
-		}, NotReadyTimeout, Interval).Should(Succeed())
+		}, NotReadyTimeout-time.Since(brokeAt), Interval).Should(Succeed())
 		// Bounded so it only sees lines written since scenario (c) broke the path, not the gateway spec's earlier window.
 		agentLog, err := kubectl("", "logs", "deploy/vpn-dep", "-c", "agent", "-n", TestNamespace,
 			fmt.Sprintf("--since=%ds", int((NotReadyTimeout+20*time.Second).Seconds())))
@@ -365,6 +373,13 @@ var _ = Describe("wireguard controller", func() {
 		}
 		expectNoLeak(Default)
 		inCluster()
+		// The agent's re-assert loop restores its FORWARD rules; gluetun's own firewall stays rolled back until scenario (d) replaces the pod.
+		restored, err := KubectlExec("deploy/vpn-dep", "agent", TestNamespace, "ip", "rule", "add", "not", "fwmark", "51820", "lookup", "51820", "pref", "101")
+		if err != nil {
+			Expect(restored).To(ContainSubstring("File exists"), "restore ip rule 101")
+		}
+		WaitForWireguardToBeReady("vpn", TestNamespace, GatewayTimeout)
+		appFetchesExit(GatewayTimeout)
 
 		By("scenario (d): the gateway pod is replaced")
 		vpnSelector := labels.SelectorFromSet(resources.LabelsForWireguard("vpn")).String()
