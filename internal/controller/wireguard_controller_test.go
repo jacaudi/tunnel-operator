@@ -1531,6 +1531,16 @@ var _ = Describe("wireguard controller", func() {
 			expectDegradedWithoutDeployment(key, "PeerCIDROverlapsLocalCIDRs|peerCIDR 10.8.0.0/24 overlaps localCIDRs[1] 10.8.0.0/16; peer addresses must lie outside the cluster's networks")
 		})
 
+		It("reports ProbeAddressInLocalCIDRs and renders no Deployment", func() {
+			key := types.NamespacedName{Name: "vpn-probe", Namespace: wgNamespace}
+			Expect(k8sClient.Create(context.Background(), &v1alpha1.Wireguard{
+				ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: []string{"10.0.0.0/24", "192.0.2.0/24"}},
+			})).Should(Succeed())
+
+			expectDegradedWithoutDeployment(key, "ProbeAddressInLocalCIDRs|localCIDRs[1] 192.0.2.0/24 contains 192.0.2.1, the address the gateway's readiness check routes through the tunnel; it is reserved for documentation (RFC 5737), so no cluster network should hold it")
+		})
+
 		It("reports ClusterIPOutsideLocalCIDRs and renders no Deployment", func() {
 			key := types.NamespacedName{Name: "vpn-cip", Namespace: wgNamespace}
 			Expect(k8sClient.Create(context.Background(), &v1alpha1.Wireguard{

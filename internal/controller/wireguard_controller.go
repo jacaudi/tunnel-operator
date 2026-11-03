@@ -336,9 +336,10 @@ func (r *WireguardReconciler) applyDeployment(ctx context.Context, dep *appsv1.D
 }
 
 // specProblem returns the Degraded reason and message for a spec the operator cannot render, or an
-// empty reason when it can. It checks, in order: peerCIDR, localCIDRs, their overlap, spec.gluetun.env,
-// then the keys of each Secret spec.gluetun.envFrom references. A referenced Secret that does not
-// exist is skipped; the kubelet reports it on the pod. err is any other failure to read a Secret.
+// empty reason when it can. It checks, in order: peerCIDR, localCIDRs, their overlap, the probe
+// address, spec.gluetun.env, then the keys of each Secret spec.gluetun.envFrom references. A
+// referenced Secret that does not exist is skipped; the kubelet reports it on the pod. err is any
+// other failure to read a Secret.
 func (r *WireguardReconciler) specProblem(ctx context.Context, wg *v1alpha1.Wireguard) (reason, message string, err error) {
 	if err := validatePeerCIDR(effectivePeerCIDR4(wg)); err != nil {
 		return ReasonInvalidPeerCIDR, err.Error(), nil
@@ -348,6 +349,9 @@ func (r *WireguardReconciler) specProblem(ctx context.Context, wg *v1alpha1.Wire
 	}
 	if err := peerCIDROverlap(effectivePeerCIDR4(wg), wg.Spec.LocalCIDRs); err != nil {
 		return ReasonPeerCIDROverlapsLocalCIDRs, err.Error(), nil
+	}
+	if err := probeAddressInLocalCIDRs(wg.Spec.LocalCIDRs); err != nil {
+		return ReasonProbeAddressInLocalCIDRs, err.Error(), nil
 	}
 	if name := reservedInEnv(wg.Spec.Gluetun.Env); name != "" {
 		return ReasonReservedGluetunEnv, fmt.Sprintf("spec.gluetun.env sets %s, which the operator renders", name), nil

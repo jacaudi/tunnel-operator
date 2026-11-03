@@ -19,6 +19,8 @@ const (
 	ReasonInvalidLocalCIDRs = "InvalidLocalCIDRs"
 	// ReasonPeerCIDROverlapsLocalCIDRs: spec.peerCIDR overlaps a spec.localCIDRs entry.
 	ReasonPeerCIDROverlapsLocalCIDRs = "PeerCIDROverlapsLocalCIDRs"
+	// ReasonProbeAddressInLocalCIDRs: a spec.localCIDRs entry contains resources.PeerProbeAddress.
+	ReasonProbeAddressInLocalCIDRs = "ProbeAddressInLocalCIDRs"
 	// ReasonClusterIPOutsideLocalCIDRs: the server Service's ClusterIP is in no spec.localCIDRs entry.
 	ReasonClusterIPOutsideLocalCIDRs = "ClusterIPOutsideLocalCIDRs"
 	// ReasonReservedGluetunEnv: spec.gluetun.env or a Secret it references sets a variable the operator renders.
@@ -57,6 +59,21 @@ func peerCIDROverlap(peerCIDR string, localCIDRs []string) error {
 	for i, c := range localCIDRs {
 		if local, _ := netip.ParsePrefix(c); peer.Overlaps(local) {
 			return fmt.Errorf("peerCIDR %s overlaps localCIDRs[%d] %s; peer addresses must lie outside the cluster's networks", peerCIDR, i, c)
+		}
+	}
+	return nil
+}
+
+// probeAddr is resources.PeerProbeAddress, parsed once at package initialization.
+var probeAddr = netip.MustParseAddr(resources.PeerProbeAddress)
+
+// probeAddressInLocalCIDRs returns an error naming the first localCIDRs entry that contains
+// resources.PeerProbeAddress. Every entry must already be valid.
+func probeAddressInLocalCIDRs(localCIDRs []string) error {
+	for i, c := range localCIDRs {
+		// An unparseable prefix is the zero Prefix, which contains nothing; callers validate first.
+		if local, _ := netip.ParsePrefix(c); local.Contains(probeAddr) {
+			return fmt.Errorf("localCIDRs[%d] %s contains %s, the address the gateway's readiness check routes through the tunnel; it is reserved for documentation (RFC 5737), so no cluster network should hold it", i, c, resources.PeerProbeAddress)
 		}
 	}
 	return nil
