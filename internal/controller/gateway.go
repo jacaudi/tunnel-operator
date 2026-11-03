@@ -15,6 +15,8 @@ import (
 const (
 	// ReasonInvalidPeerCIDR: spec.peerCIDR is not a canonical IPv4 prefix of /30 or shorter.
 	ReasonInvalidPeerCIDR = "InvalidPeerCIDR"
+	// ReasonProbeAddressInPeerCIDR: spec.peerCIDR contains resources.PeerProbeAddress.
+	ReasonProbeAddressInPeerCIDR = "ProbeAddressInPeerCIDR"
 	// ReasonInvalidLocalCIDRs: a spec.localCIDRs entry is not a canonical IPv4 prefix.
 	ReasonInvalidLocalCIDRs = "InvalidLocalCIDRs"
 	// ReasonPeerCIDROverlapsLocalCIDRs: spec.peerCIDR overlaps a spec.localCIDRs entry.
@@ -75,6 +77,16 @@ func probeAddressInLocalCIDRs(localCIDRs []string) error {
 		if local, _ := netip.ParsePrefix(c); local.Contains(probeAddr) {
 			return fmt.Errorf("localCIDRs[%d] %s contains %s, the address the gateway's readiness check routes through the tunnel; it is reserved for documentation (RFC 5737), so no cluster network should hold it", i, c, resources.PeerProbeAddress)
 		}
+	}
+	return nil
+}
+
+// probeAddressInPeerCIDR returns an error when peerCIDR contains resources.PeerProbeAddress.
+// peerCIDR must already be valid.
+func probeAddressInPeerCIDR(peerCIDR string) error {
+	// An unparseable prefix is the zero Prefix, which contains nothing; callers validate first.
+	if peer, _ := netip.ParsePrefix(peerCIDR); peer.Contains(probeAddr) {
+		return fmt.Errorf("peerCIDR %s contains %s, the address the gateway's readiness check routes through the tunnel; it is reserved for documentation (RFC 5737), so choose a peer range that does not hold it", peerCIDR, resources.PeerProbeAddress)
 	}
 	return nil
 }
