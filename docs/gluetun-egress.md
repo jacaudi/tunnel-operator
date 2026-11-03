@@ -73,8 +73,8 @@ pref 102   iif wg0              lookup 51822   # agent: table 51822 = blackhole 
   fail-closed rule: the pod's main-table default route through `eth0` is unreachable for peer
   traffic whatever happens to iptables.
 
-If gluetun's tunnel table has no route, or gluetun's firewall rolls back, peer traffic is dropped.
-The agent also reports the pod not ready; see
+If gluetun's tunnel table has no route, or its tunnel rule (rule 101) is gone, rule 102 drops peer
+traffic, whatever gluetun's firewall does. The agent then also reports the pod not ready; see
 [Readiness follows the tunnel](#readiness-follows-the-tunnel).
 
 ## The iptables rules
