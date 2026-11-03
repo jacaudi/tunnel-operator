@@ -71,7 +71,7 @@ func toRoute(r netlink.Route) route {
 		Dst:       netip.PrefixFrom(netip.IPv4Unspecified(), 0),
 		LinkIndex: r.LinkIndex,
 		Priority:  r.Priority,
-		Protocol:  r.Protocol,
+		Protocol:  int(r.Protocol),
 		Scope:     uint8(r.Scope),
 	}
 	if r.Dst != nil {
@@ -93,7 +93,7 @@ func deleteStale(stale []route) error {
 		// netlink's routeHandle always writes msg.Scope, so the delete must carry the route's own scope
 		// or a gateway-less "default dev X scope link" would not match and would stay.
 		del := &netlink.Route{
-			Dst: ipNet(r.Dst), LinkIndex: r.LinkIndex, Priority: r.Priority, Protocol: r.Protocol,
+			Dst: ipNet(r.Dst), LinkIndex: r.LinkIndex, Priority: r.Priority, Protocol: netlink.RouteProtocol(r.Protocol),
 			Scope: netlink.Scope(r.Scope), Table: unix.RT_TABLE_MAIN,
 		}
 		if r.Gw.IsValid() {
