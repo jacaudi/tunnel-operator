@@ -53,7 +53,9 @@ const (
 	Timeout = time.Second * 120
 	// GatewayTimeout bounds waits that include gluetun becoming healthy through the fake exit node (about 1 s once
 	// both pods run with images cached, measured on kind; the rest of the budget is image pulls on a cold node).
-	GatewayTimeout      = 5 * time.Minute
+	GatewayTimeout = 5 * time.Minute
+	// NotReadyTimeout bounds how long the gateway takes to read Ready=False once its peer path breaks: the readiness probe's failureThreshold (3) × periodSeconds (10), plus 10 s for the endpoint and the operator's status.
+	NotReadyTimeout     = 40 * time.Second
 	Interval            = time.Second * 1
 	testClusterName     = "wg-kind-test"
 	testKindContextName = "kind-" + testClusterName
