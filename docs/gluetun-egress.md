@@ -41,10 +41,13 @@ the operator's value takes precedence.
 
 The operator checks that each entry is a canonical IPv4 CIDR, that the Service's ClusterIP falls
 inside one (clients route everything outside `localCIDRs` into the tunnel, including the gateway's
-own Service), and that none overlaps `peerCIDR`. It does **not** check that `localCIDRs` avoids the
-provider's tunnel range. An entry that overlaps it keeps that traffic off the tunnel, so keep your
-`localCIDRs` outside the range your provider uses; gluetun's firewall documentation says the same of
-`FIREWALL_OUTBOUND_SUBNETS`.
+own Service), and that none overlaps `peerCIDR`. An entry that contains `192.0.2.1` sets `Degraded`
+with reason `ProbeAddressInLocalCIDRs` and no Deployment is rendered, because the agent's readiness
+check routes that address through the tunnel (see
+[Readiness follows the tunnel](#readiness-follows-the-tunnel)). The operator does **not** check that
+`localCIDRs` avoids the provider's tunnel range. An entry that overlaps it keeps that traffic off the
+tunnel, so keep your `localCIDRs` outside the range your provider uses; gluetun's firewall
+documentation says the same of `FIREWALL_OUTBOUND_SUBNETS`.
 
 ## Fail closed by routing
 
@@ -71,6 +74,8 @@ pref 102   iif wg0              lookup 51822   # agent: table 51822 = blackhole 
   traffic whatever happens to iptables.
 
 If gluetun's tunnel table has no route, or gluetun's firewall rolls back, peer traffic is dropped.
+The agent also reports the pod not ready; see
+[Readiness follows the tunnel](#readiness-follows-the-tunnel).
 
 ## The iptables rules
 
@@ -94,9 +99,18 @@ gluetun restart costs an outage, not a leak.
 ## Readiness follows the tunnel
 
 The agent's `/health` is the pod's readiness probe. It succeeds only when the desired state is
-valid, `wg0` is synced to it, the datapath above has been asserted, and gluetun's health server on
-`127.0.0.1:9999` answers `200`. An unhealthy tunnel makes the server pod not ready, the Service
-drops its only endpoint, and clients stop handshaking.
+valid, `wg0` is synced to it, the datapath above has been asserted, the kernel would forward a
+peer's packet arriving on `wg0` into `tun0`, and gluetun's health server on `127.0.0.1:9999`
+answers `200`. An unhealthy tunnel makes the server pod not ready, the Service drops its only
+endpoint, and clients stop handshaking.
+
+The peer-path check asks the kernel for the route to `192.0.2.1`, a documentation address
+([RFC 5737](https://www.rfc-editor.org/rfc/rfc5737)), from the second address in `peerCIDR`
+arriving on `wg0`. That is the lookup `ip route get 192.0.2.1 from 10.8.0.2 iif wg0` performs
+with the default `peerCIDR`, and the agent sends no packet. It exists because gluetun's own health
+check can pass while peers are blackholed: gluetun's traffic does not arrive on `wg0`, so only a
+lookup that does catches it. With the default probe settings (every 10 seconds, 3 failures), the
+pod goes not ready within about 30 seconds of the path breaking.
 
 The `Wireguard` follows the pod: `Ready` is `False` with reason `DeploymentNotReady` until the
 Deployment rendered from the current spec has rolled out, and `True` only then. A new gateway
