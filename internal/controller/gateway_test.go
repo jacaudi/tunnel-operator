@@ -74,6 +74,27 @@ func TestPeerCIDROverlap(t *testing.T) {
 	}
 }
 
+func TestProbeAddressInLocalCIDRs(t *testing.T) {
+	const reserved = "contains 192.0.2.1, the address the gateway's readiness check routes through the tunnel; it is reserved for documentation (RFC 5737), so no cluster network should hold it"
+	tests := []struct {
+		name       string
+		localCIDRs []string
+		want       string // "" means nil
+	}{
+		{name: "cluster network", localCIDRs: []string{"10.96.0.0/12"}},
+		{name: "second entry is the probe's documentation range", localCIDRs: []string{"10.0.0.0/24", "192.0.2.0/24"}, want: "localCIDRs[1] 192.0.2.0/24 " + reserved},
+		{name: "a wider entry holds the probe", localCIDRs: []string{"192.0.0.0/8"}, want: "localCIDRs[0] 192.0.0.0/8 " + reserved},
+		{name: "a neighbouring prefix does not", localCIDRs: []string{"192.0.2.2/31"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := errText(probeAddressInLocalCIDRs(tt.localCIDRs)); got != tt.want {
+				t.Errorf("probeAddressInLocalCIDRs(%q) = %q, want %q", tt.localCIDRs, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestClusterIPOutside(t *testing.T) {
 	tests := []struct {
 		name      string
