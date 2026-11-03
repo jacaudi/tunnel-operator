@@ -95,6 +95,27 @@ func TestProbeAddressInLocalCIDRs(t *testing.T) {
 	}
 }
 
+func TestProbeAddressInPeerCIDR(t *testing.T) {
+	const reserved = "contains 192.0.2.1, the address the gateway's readiness check routes through the tunnel; it is reserved for documentation (RFC 5737), so choose a peer range that does not hold it"
+	tests := []struct {
+		name     string
+		peerCIDR string
+		want     string // "" means nil
+	}{
+		{name: "default peer range", peerCIDR: "10.8.0.0/24"},
+		{name: "the probe's documentation range", peerCIDR: "192.0.2.0/24", want: "peerCIDR 192.0.2.0/24 " + reserved},
+		{name: "a wider range holds the probe", peerCIDR: "192.0.0.0/22", want: "peerCIDR 192.0.0.0/22 " + reserved},
+		{name: "a neighbouring prefix does not", peerCIDR: "192.0.2.4/30"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := errText(probeAddressInPeerCIDR(tt.peerCIDR)); got != tt.want {
+				t.Errorf("probeAddressInPeerCIDR(%q) = %q, want %q", tt.peerCIDR, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestClusterIPOutside(t *testing.T) {
 	tests := []struct {
 		name      string

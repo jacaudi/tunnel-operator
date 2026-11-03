@@ -58,6 +58,6 @@ const (
 	BlackholePref = 102
 	// ReassertInterval is how often the agent re-asserts its routes, rules and iptables rules.
 	ReassertInterval = 10 * time.Second
-	// PeerProbeAddress is the destination the agent's readiness check routes as if a peer had sent it: RFC 5737 TEST-NET-1, never a real host and outside every localCIDRs entry the operator accepts. No packet is sent.
+	// PeerProbeAddress is the destination the agent's readiness check routes as if a peer had sent it: RFC 5737 TEST-NET-1, never a real host and outside the peerCIDR and every localCIDRs entry the operator accepts. No packet is sent.
 	PeerProbeAddress = "192.0.2.1"
 )
