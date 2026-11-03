@@ -71,10 +71,12 @@ in [gluetun-egress.md](gluetun-egress.md).
   reach the file, so writing them does not rewrite the Secret. The agent watches the file and
   diffs it against the live device, adding, updating and removing peers by public key.
 - **Readiness.** `GET /health` on port `8080` re-reads and re-applies the state. It fails when the
-  state is missing, invalid or cannot be applied, when the datapath has not been asserted, and when
-  gluetun's health server answers anything but `200`. The pod is ready only when `wg0` is synced,
-  the datapath is asserted and gluetun is healthy, and the `Wireguard` reports `Ready` only once
-  that pod has rolled out.
+  state is missing, invalid or cannot be applied, when the datapath has not been asserted, when a
+  peer's packet arriving on `wg0` would not be forwarded into the tunnel, and when gluetun's health
+  server answers anything but `200`. The pod is ready only when `wg0` is synced, the datapath is
+  asserted, a peer's packet arriving on `wg0` would be forwarded into the tunnel and gluetun is
+  healthy, and the `Wireguard` reports `Ready` only once that pod has rolled out. See
+  [Readiness follows the tunnel](gluetun-egress.md#readiness-follows-the-tunnel).
 
 ## Identity and addresses
 
