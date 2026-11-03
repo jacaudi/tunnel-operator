@@ -182,6 +182,7 @@ var _ = Describe("wireguard controller", func() {
 		route, err = routeGet()
 		Expect(err).NotTo(HaveOccurred(), "ip route get after restoring rule 101: %s", route)
 		Expect(route).To(ContainSubstring("dev tun0"))
+		WaitForWireguardToBeReady("vpn", TestNamespace, GatewayTimeout)
 	})
 
 	It("routes a client pod through the gateway and fails closed", func() {
@@ -344,10 +345,20 @@ var _ = Describe("wireguard controller", func() {
 
 		By("scenario (c): gluetun's firewall is rolled back and its tunnel rule is gone")
 		// gluetun's disable() IPv4 commands, plus the tunnel rule. Scenario (d) restores both.
+		// The gateway must then read Ready=False: gluetun's own health check still passes, so only the agent's peer-path check can drop it.
 		vpnAgent(Default, "sh", "-c", "iptables -F && iptables -X && iptables -P INPUT ACCEPT && iptables -P OUTPUT ACCEPT && iptables -P FORWARD ACCEPT && ip rule del pref 101")
 		route, err := KubectlExec("deploy/vpn-dep", "agent", TestNamespace, "ip", "route", "get", exitAddress, "from", clientAddress, "iif", "wg0")
 		Expect(err).To(HaveOccurred(), "ip route get without rule 101 returned a route: %s", route)
 		Expect(route).To(ContainSubstring("Invalid argument"))
+		Eventually(func(g Gomega) {
+			g.Expect(get(g, "wireguard/vpn", `{.status.conditions[?(@.type=="Ready")].status}`)).To(Equal("False"))
+			g.Expect(get(g, "wireguard/vpn", `{.status.conditions[?(@.type=="Ready")].reason}`)).To(Equal("DeploymentNotReady"))
+		}, NotReadyTimeout, Interval).Should(Succeed())
+		// Bounded so it only sees lines written since scenario (c) broke the path, not the gateway spec's earlier window.
+		agentLog, err := kubectl("", "logs", "deploy/vpn-dep", "-c", "agent", "-n", TestNamespace,
+			fmt.Sprintf("--since=%ds", int((NotReadyTimeout+20*time.Second).Seconds())))
+		Expect(err).NotTo(HaveOccurred(), "agent log of vpn-dep: %s", agentLog)
+		Expect(agentLog).To(ContainSubstring("agent is not ready as peer traffic would not reach the tunnel"))
 		for range 10 {
 			body, err := appFetch()
 			expectNeverNode(Default, body, err)
