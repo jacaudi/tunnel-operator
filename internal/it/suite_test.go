@@ -305,6 +305,8 @@ var _ = BeforeSuite(func() {
 		"clusterrolebinding.rbac.authorization.k8s.io/wireguard-metrics-reader",
 		"service/wireguard-controller-manager-metrics-service",
 		"deployment.apps/wireguard-controller-manager",
+		"validatingadmissionpolicy.admissionregistration.k8s.io/wireguard-operator-require-injection",
+		"validatingadmissionpolicybinding.admissionregistration.k8s.io/wireguard-operator-require-injection",
 	}
 
 	Expect(strings.Split(strings.Trim(strings.ReplaceAll(string(b), " created", ""), "\n"), "\n")).To(BeEquivalentTo(expectedResources))
