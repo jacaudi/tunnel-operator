@@ -4,8 +4,9 @@ The client sidecar is the WireGuard client for an application pod. You add one i
 `restartPolicy: Always` — a native sidecar — as the **first** init container of the pod. It runs
 the agent image as `agent client`, registers the pod with a [`Wireguard`](crd-wireguard.md) server
 and routes the pod's internet traffic through the tunnel to the gateway. The operator injects
-nothing; there is no webhook. [`examples/client.yaml`](../examples/client.yaml) is a complete
-Deployment.
+nothing into a pod that is not labelled, and there is no webhook. [`examples/client.yaml`](../examples/client.yaml)
+is a complete Deployment. To have the operator inject the block for you instead, label the pod
+(see [injection.md](injection.md)).
 
 ## What it does
 
