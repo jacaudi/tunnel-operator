@@ -31,6 +31,10 @@ import (
 	"github.com/jacaudi/wireguard-operator/internal/resources"
 )
 
+// excludedNamespace is the one namespace no pod is injected in: the cluster's own components live there.
+// config/admission/require_injection_binding.yaml names it too, and a unit test holds the two equal.
+const excludedNamespace = "kube-system"
+
 // injectPolicyName names the MutatingAdmissionPolicy and its binding. It is literal, and already
 // carries the release's name prefix: the operator writes these at runtime, so kustomize never sees them.
 const injectPolicyName = "wireguard-operator-inject"
@@ -179,7 +183,7 @@ func injectMatchResources() (map[string]any, error) {
 			MatchExpressions: []metav1.LabelSelectorRequirement{{Key: resources.LabelComponent, Operator: metav1.LabelSelectorOpDoesNotExist}},
 		},
 		NamespaceSelector: &metav1.LabelSelector{
-			MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "kubernetes.io/metadata.name", Operator: metav1.LabelSelectorOpNotIn, Values: []string{"kube-system"}}},
+			MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "kubernetes.io/metadata.name", Operator: metav1.LabelSelectorOpNotIn, Values: []string{excludedNamespace}}},
 		},
 	})
 }
@@ -294,6 +298,16 @@ type InjectionPolicyReconciler struct {
 	OperatorNamespace string
 }
 
+// applyForced applies obj with Server-Side Apply under the operator's field manager, forcing ownership, so
+// the operator converges an object a human edited. For the objects the operator writes whole at runtime;
+// the builders' objects go through applyOwned.
+func applyForced(ctx context.Context, c client.Client, obj *unstructured.Unstructured) error {
+	if err := c.Apply(ctx, client.ApplyConfigurationFromUnstructured(obj), client.FieldOwner(FieldManager), client.ForceOwnership); err != nil {
+		return fmt.Errorf("apply %s %s: %w", obj.GetKind(), client.ObjectKeyFromObject(obj), err)
+	}
+	return nil
+}
+
 // injectionKey is the singleton reconcile key: every Wireguard event and the startup kick ask the same question.
 var injectionKey = types.NamespacedName{Namespace: "injection", Name: "policy"}
 
@@ -331,9 +345,8 @@ func (r *InjectionPolicyReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 	}
 	// Policy before binding: a binding to a policy that does not exist yet is simply inactive.
 	for _, obj := range []*unstructured.Unstructured{policy, binding} {
-		if err := r.Apply(ctx, client.ApplyConfigurationFromUnstructured(obj),
-			client.FieldOwner(FieldManager), client.ForceOwnership); err != nil {
-			return ctrl.Result{}, fmt.Errorf("apply %s %s: %w", obj.GetKind(), obj.GetName(), err)
+		if err := applyForced(ctx, r.Client, obj); err != nil {
+			return ctrl.Result{}, err
 		}
 	}
 	log.Info("sidecar injection is on", "gateway", gateway.String())

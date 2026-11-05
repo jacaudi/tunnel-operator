@@ -56,6 +56,25 @@ rules:
   verbs:
   - create
 - apiGroups:
+  - rbac.authorization.k8s.io
+  resourceNames:
+  - wireguard-operator-client
+  resources:
+  - clusterroles
+  verbs:
+  - bind
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - rolebindings
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - watch
+- apiGroups:
   - vpn.wireguard-operator.io
   resources:
   - wireguardpeers
