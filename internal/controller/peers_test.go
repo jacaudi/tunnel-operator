@@ -116,6 +116,11 @@ func TestPeerStatusMatches(t *testing.T) {
 			mutate: func(p *v1alpha1.WireguardPeer) { p.Status.Address = "10.8.0.9" },
 			want:   false,
 		},
+		{
+			name:   "gateway identity not yet cleared",
+			mutate: func(p *v1alpha1.WireguardPeer) { p.Status.Endpoint = "10.96.0.9:51820" },
+			want:   false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -528,7 +533,7 @@ func TestAdmitPeersStatusWriteErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r := &WireguardReconciler{Client: failingStatusClient{err: tt.writeErr}}
 
-			admitted, err := r.admitPeers(t.Context(), []v1alpha1.WireguardPeer{keyless, keyed})
+			admitted, err := r.admitPeers(t.Context(), &v1alpha1.Wireguard{}, []v1alpha1.WireguardPeer{keyless, keyed})
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("admitPeers() error = %v, wantErr %v", err, tt.wantErr)
 			}

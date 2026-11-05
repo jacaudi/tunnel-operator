@@ -25,10 +25,18 @@ type WireguardPeerSpec struct {
 	// The key used by the peer to authenticate with the wg server.
 	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]=$`
 	PublicKey string `json:"publicKey,omitempty"`
-	// The name of the Wireguard instance in k8s that the peer belongs to. The wg instance should be in the same namespace as the peer.
+	// The name of the Wireguard instance in k8s that the peer belongs to. It is in the peer's own
+	// namespace unless wireguardNamespace says otherwise.
 	//+kubebuilder:validation:Required
 	//+kubebuilder:validation:MinLength=1
 	WireguardRef string `json:"wireguardRef"`
+	// WireguardNamespace is the namespace of the Wireguard instance. When empty, the Wireguard is in
+	// the peer's own namespace. The Wireguard's spec.allowedNamespaces decides whether the peer is
+	// admitted.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	WireguardNamespace string `json:"wireguardNamespace,omitempty"`
 }
 
 // WireguardPeerStatus defines the observed state of WireguardPeer
@@ -40,6 +48,14 @@ type WireguardPeerStatus struct {
 	// Address is the peer's IPv4 tunnel address, without a prefix length, allocated by the operator
 	// from the server's peerCIDR. The server routes <address>/32 to this peer.
 	Address string `json:"address,omitempty"`
+	// Endpoint is the address the peer dials: the gateway's Service ClusterIP and the WireGuard port,
+	// as host:port. The operator copies it from the Wireguard while the peer is admitted.
+	Endpoint string `json:"endpoint,omitempty"`
+	// ServerPublicKey is the gateway's WireGuard public key, copied from the Wireguard.
+	ServerPublicKey string `json:"serverPublicKey,omitempty"`
+	// LocalCIDRs is the gateway's spec.localCIDRs: the cluster ranges the peer routes over the CNI,
+	// never through the tunnel.
+	LocalCIDRs []string `json:"localCIDRs,omitempty"`
 	// Conditions represent the latest available observations of the WireguardPeer's state.
 	// +optional
 	// +patchMergeKey=type

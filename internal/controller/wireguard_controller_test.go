@@ -320,6 +320,15 @@ var _ = Describe("wireguard controller", func() {
 				return peer.Status.Address
 			}, Timeout, Interval).Should(Equal("10.8.0.2"))
 
+			// Besides its address, a peer carries what a client needs of its gateway.
+			svc := &corev1.Service{}
+			Eventually(func() string {
+				if err := k8sClient.Get(context.Background(), types.NamespacedName{Name: wgName + "-svc", Namespace: wgNamespace}, svc); err != nil {
+					return ""
+				}
+				return svc.Spec.ClusterIP
+			}, Timeout, Interval).ShouldNot(BeEmpty())
+
 			Eventually(func() v1alpha1.WireguardPeerStatus {
 				err := k8sClient.Get(context.Background(), peerKey, peer)
 				if err != nil {
@@ -327,9 +336,12 @@ var _ = Describe("wireguard controller", func() {
 				}
 				return peer.Status
 			}, Timeout, Interval).Should(Equal(v1alpha1.WireguardPeerStatus{
-				Status:  "ready",
-				Message: "Peer configured",
-				Address: "10.8.0.2",
+				Status:          "ready",
+				Message:         "Peer configured",
+				Address:         "10.8.0.2",
+				Endpoint:        svc.Spec.ClusterIP + ":51820",
+				ServerPublicKey: string(wgSecret.Data["publicKey"]),
+				LocalCIDRs:      testLocalCIDRs,
 			}))
 
 			Eventually(func() error {
