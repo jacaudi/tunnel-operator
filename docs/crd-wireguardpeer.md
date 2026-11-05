@@ -71,9 +71,5 @@ What each state means:
 - **A malformed `publicKey` is rejected at admission.** The API refuses a key that is not a
   canonical 32-byte base64 WireGuard key, so it cannot stall the server. A key stored before that
   check reports `InvalidPublicKey` and is left out of the server's state.
-- **Clusters without CRD validation ratcheting.** Kubernetes before 1.30, or with the feature gate
-  off, validates the whole object on every write. There, a peer stored with a `publicKey` that
-  predates the pattern cannot have its status written. The operator logs an error on every
-  reconcile and leaves the peer out of the server's state, but the peer keeps its old status, and
-  its old `status.address` is not reserved, so another peer can be given it. Fix it by deleting the
-  peer, or by setting a canonical key.
+  CRD validation ratcheting is always on from Kubernetes 1.33, so such a peer does not block its own
+  status writes.
