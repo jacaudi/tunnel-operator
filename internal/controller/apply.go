@@ -8,6 +8,8 @@ import (
 	"github.com/jacaudi/wireguard-operator/api/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/util/csaupgrade"
@@ -34,9 +36,9 @@ var legacyFieldManagers = sets.New("manager")
 // apiserver performs the diff; there is deliberately no client-side comparison. obj is
 // overwritten with the server's response, so each call needs a freshly built object.
 //
-// What the operator ends up owning is what json.Marshal of the built object emits, which is not
-// the same as "the fields the builder sets", in either direction. Zero-valued structs are emitted
-// despite omitempty -- so the operator owns spec.strategy, the agent container's resources, and
+// What the operator ends up owning is what the unstructured conversion of the built object emits,
+// which matches json.Marshal, and is not the same as "the fields the builder sets", in either
+// direction. Zero-valued structs are emitted despite omitempty -- so the operator owns spec.strategy, the agent container's resources, and
 // the pod template's creationTimestamp, none of which any builder sets. Zero-valued scalars with
 // omitempty are dropped -- so a nodePort of 0 is not owned, which is what lets the apiserver keep
 // its own allocation.
@@ -87,9 +89,18 @@ func (r *WireguardReconciler) applyOwned(ctx context.Context, obj client.Object)
 		}
 	}
 
-	if err := r.Patch(ctx, obj, client.Apply,
+	m, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
+	if err != nil {
+		return fmt.Errorf("convert %s %s: %w", gvk.Kind, key, err)
+	}
+	u := &unstructured.Unstructured{Object: m}
+	if err := r.Apply(ctx, client.ApplyConfigurationFromUnstructured(u),
 		client.FieldOwner(FieldManager), client.ForceOwnership); err != nil {
 		return fmt.Errorf("apply %s %s: %w", gvk.Kind, key, err)
+	}
+	// Callers read the server's response (for example the Service's allocated ClusterIP).
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, obj); err != nil {
+		return fmt.Errorf("decode applied %s %s: %w", gvk.Kind, key, err)
 	}
 	return nil
 }
