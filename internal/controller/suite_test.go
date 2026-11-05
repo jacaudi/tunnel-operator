@@ -30,6 +30,7 @@ import (
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -45,6 +46,9 @@ var k8sClient client.Client
 var writeCounter *countingClient
 var testEnv *envtest.Environment
 var wgTestImage = "test-image"
+
+// cfg is the rest config of the envtest apiserver, shared with specs that talk to it directly.
+var cfg *rest.Config
 
 // testLocalCIDRs is a valid spec.localCIDRs for envtest: its apiserver allocates ClusterIPs from
 // 10.0.0.0/24 (controller-runtime's envtest default), and the range overlaps no peerCIDR a spec uses.
@@ -67,12 +71,18 @@ var _ = BeforeSuite(func() {
 		ControlPlaneStopTimeout: time.Second * 120,
 	}
 
+	// The operator's floor is Kubernetes 1.34 with the MutatingAdmissionPolicy beta enabled.
+	testEnv.ControlPlane.GetAPIServer().Configure().
+		Append("feature-gates", "MutatingAdmissionPolicy=true").
+		Append("runtime-config", "admissionregistration.k8s.io/v1beta1=true")
+
 	if os.Getenv("ENVTEST_DEBUG_OUTPUT") != "" {
 		testEnv.ControlPlane.GetAPIServer().Out = GinkgoWriter
 		testEnv.ControlPlane.GetAPIServer().Err = GinkgoWriter
 	}
 
-	cfg, err := testEnv.Start()
+	var err error
+	cfg, err = testEnv.Start()
 	Expect(err).NotTo(HaveOccurred())
 	Expect(cfg).NotTo(BeNil())
 

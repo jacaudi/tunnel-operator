@@ -39,27 +39,17 @@ jobs:
       # rather than skipping, which is the behaviour you want.
       - name: Install setup-envtest
         env:
-          # THE TEMPLATE'S STOCK v0.22.1 DOES NOT RESOLVE — verified, and it
-          # would fail this step in any consumer, not just here:
-          #   go: sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.22.1:
-          #   module sigs.k8s.io/controller-runtime@v0.22.1 found, but does not
-          #   contain package .../tools/setup-envtest
-          # tools/setup-envtest is a SEPARATE MODULE with its own tag line, and
-          # its only released versions are v0.24.0 and v0.24.1. A controller-
-          # runtime version number is not a valid version for it. Worth reporting
-          # upstream.
-          #
-          # The tool version is also independent of the library version: this is
-          # a downloader for apiserver/etcd binaries. What has to match this
-          # repo's k8s.io/* v0.30 client stack is the ASSET version below, not
-          # this. Verified: v0.24.1 fetches 1.30.0 assets and the suite passes
-          # against controller-runtime v0.18.5.
+          # tools/setup-envtest is a SEPARATE module with its own tag line (its first
+          # release is v0.24.0), so a controller-runtime version number is not a valid
+          # version for it. Its version is independent of the library's: this is a
+          # downloader for apiserver/etcd binaries. What has to match this repo's
+          # k8s.io/* v0.37 client stack is the ASSET version below, not this.
           #
           # The stock renovate annotation named controller-runtime, which is the
           # wrong module for this pin and would propose versions that cannot
           # install.
           # renovate: datasource=go depName=sigs.k8s.io/controller-runtime/tools/setup-envtest
-          SETUP_ENVTEST_VERSION: v0.24.1
+          SETUP_ENVTEST_VERSION: v0.25.2
         run: go install "sigs.k8s.io/controller-runtime/tools/setup-envtest@${SETUP_ENVTEST_VERSION}"
 
       - name: Resolve envtest assets
@@ -68,12 +58,13 @@ jobs:
           # non-reproducible and lets an upstream k8s release turn the fleet red
           # overnight with nothing to bisect against.
           #
-          # 1.30.0, not the template's stock 1.34.x — this repo's client stack is
-          # k8s.io/* v0.30.x behind controller-runtime v0.18.5. THIS NUMBER HAS
-          # THREE COPIES that no tool can share: here, Makefile's
-          # ENVTEST_K8S_VERSION, and the fallback in .taskfiles/go.yml's
-          # `integration` task. Change one, change all three.
-          ENVTEST_K8S_VERSION: '1.30.0'
+          # 1.34.1: the Kubernetes floor this repo supports, matching its k8s.io/*
+          # v0.37 client stack, with the MutatingAdmissionPolicy beta enabled by the
+          # suite (see internal/controller/suite_test.go). THIS NUMBER HAS FOUR
+          # COPIES that no tool can share: here, Makefile's ENVTEST_K8S_VERSION, the
+          # fallback in .taskfiles/go.yml's `integration` task, and the default in
+          # hack/test-in-docker.sh. Change one, change all four.
+          ENVTEST_K8S_VERSION: '1.34.1'
         run: |
           set -euo pipefail
           path=$(setup-envtest use "${ENVTEST_K8S_VERSION}" --bin-dir "${RUNNER_TEMP}/envtest" -p path)
