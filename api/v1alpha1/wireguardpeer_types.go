@@ -72,7 +72,3 @@ type WireguardPeerList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []WireguardPeer `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&WireguardPeer{}, &WireguardPeerList{})
-}

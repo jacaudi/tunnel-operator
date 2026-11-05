@@ -1273,7 +1273,7 @@ var _ = Describe("wireguard controller", func() {
 			var legacyFields string
 			for _, mf := range seeded.ManagedFields {
 				if mf.Manager == "manager" && mf.Operation == metav1.ManagedFieldsOperationUpdate && mf.FieldsV1 != nil {
-					legacyFields = string(mf.FieldsV1.Raw)
+					legacyFields = mf.FieldsV1.GetRawString()
 				}
 			}
 			Expect(legacyFields).ShouldNot(BeEmpty(), "the seed must carry an Update entry for manager")
