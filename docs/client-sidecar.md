@@ -131,8 +131,10 @@ args: ["client", "--wireguard", "network/vpn"]
 
 The sidecar's `WireguardPeer` stays in the pod's own namespace, with the pod as its owner, so
 deleting the pod still deletes the peer. It records the gateway in `spec.wireguardNamespace`. The
-operator admits the peer, allocates it an address that no peer in any namespace shares, and copies
+operator admits the peer, allocates it an address that no other peer of the gateway shares, whatever its namespace, and copies
 the gateway's endpoint, public key and `localCIDRs` into the peer's status.
+Two gateways with the same `peerCIDR` can hand out the same address, which is harmless because each
+gateway routes only its own peers.
 
 - **Consent is the gateway's.** A `Wireguard` admits every namespace unless its
   `spec.allowedNamespaces.from` is `Same`; a peer from another namespace then reads

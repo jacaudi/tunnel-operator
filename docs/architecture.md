@@ -5,8 +5,9 @@
 Some workloads need their internet traffic to leave through a commercial VPN provider, while
 everything in-cluster — DNS, other pods, Services — keeps working normally. Running a VPN client in
 every pod spreads provider credentials across the cluster and makes each pod's kill switch its own
-problem. This operator puts one WireGuard server in the workload's namespace instead: pods tunnel
-to it by public key, and the server is the single place where traffic meets the provider.
+problem. This operator puts one WireGuard server in the cluster instead: pods tunnel to it
+by public key, from any namespace the server allows, and the server is the single place where
+traffic meets the provider.
 
 ## Two resources
 
@@ -18,10 +19,12 @@ WireguardPeer ──wireguardRef──▶ Wireguard ──owns──▶ Secret <
 - **[`Wireguard`](crd-wireguard.md)** — the server. It owns the key Secret, the ClusterIP Service
   and the single-replica Deployment. It does not own its peers.
 - **[`WireguardPeer`](crd-wireguardpeer.md)** — a client. It carries the public key and receives an
-  address. It lives in the server's namespace and is resolved there.
+  address. It lives in its own namespace and names its server by `wireguardRef` and, for a server in
+  another namespace, `wireguardNamespace`.
 
 There is one controller. It reconciles each `Wireguard` and also watches `WireguardPeer` objects,
-mapping each peer to the server its `wireguardRef` names, not to an owner. A peer change therefore
+mapping each peer to the server its `wireguardRef` and `wireguardNamespace` name, not to an owner.
+A peer change therefore
 reconciles the server it points at, and a peer that changes `wireguardRef` reconciles both the old
 and the new server.
 
@@ -65,8 +68,9 @@ in [gluetun-egress.md](gluetun-egress.md).
   server's private key, the server's name, namespace and spec (without `spec.gluetun`, so provider
   credentials never reach a second Secret), and, for each peer the server
   admits (a valid key and an address), the peer's name, namespace, `publicKey`, `wireguardRef` and
-  `status.address`, sorted by name — into the Secret's `state.json`, which the pod mounts. A peer
-  with no key, an invalid key, an address conflict or no free address is left out. Other peer
+  `status.address`, sorted by name and then namespace — into the Secret's `state.json`, which
+  the pod mounts. A peer with no key, an invalid key, a key an older peer holds, a namespace the server does not allow,
+  an address conflict or no free address is left out. Other peer
   metadata (labels, annotations, resourceVersion, managedFields) and the rest of the status never
   reach the file, so writing them does not rewrite the Secret. The agent watches the file and
   diffs it against the live device, adding, updating and removing peers by public key.
@@ -107,6 +111,5 @@ The gateway fails closed by **routing** rather than by firewall rules alone:
 
 - **Clients outside the cluster** — phones, laptops, LoadBalancer or NodePort Services, external
   addresses, wstunnel.
-- **Cross-namespace attachment** — a peer and its server share a namespace.
 - **IPv6, per-peer egress policy, bandwidth limits, metrics, high availability, and DNS through the
   gateway** — clients keep cluster DNS.
