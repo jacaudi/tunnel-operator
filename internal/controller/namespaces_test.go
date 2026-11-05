@@ -2,13 +2,16 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/jacaudi/wireguard-operator/api/v1alpha1"
+	"github.com/jacaudi/wireguard-operator/internal/agent"
 
+	corev1 "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -78,6 +81,9 @@ func newFakeClient(t *testing.T, funcs interceptor.Funcs, objs ...client.Object)
 	s := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(s); err != nil {
 		t.Fatalf("add v1alpha1 to the scheme: %v", err)
+	}
+	if err := corev1.AddToScheme(s); err != nil {
+		t.Fatalf("add corev1 to the scheme: %v", err)
 	}
 	return fake.NewClientBuilder().WithScheme(s).WithObjects(objs...).
 		WithStatusSubresource(&v1alpha1.WireguardPeer{}).WithInterceptorFuncs(funcs).Build()
@@ -225,7 +231,7 @@ func TestPublicKeyConflict(t *testing.T) {
 		Status:           v1alpha1.Pending,
 		Message:          "Public key is held by peer media/app; waiting for it to be released",
 		Reason:           ReasonPublicKeyConflict,
-		ConditionMessage: "spec.publicKey is already held by the older peer media/app of this Wireguard, so this peer cannot be admitted",
+		ConditionMessage: "spec.publicKey is already held by peer media/app of this Wireguard, so this peer cannot be admitted",
 	}
 	if got := publicKeyConflict("media/app"); !reflect.DeepEqual(got, want) {
 		t.Errorf("publicKeyConflict() = %+v, want %+v", got, want)
@@ -234,46 +240,67 @@ func TestPublicKeyConflict(t *testing.T) {
 
 func TestDedupePublicKeys(t *testing.T) {
 	base := time.Date(2026, time.November, 5, 12, 0, 0, 0, time.UTC)
-	older, newer := metav1.NewTime(base), metav1.NewTime(base.Add(time.Second))
+	old, young := metav1.NewTime(base), metav1.NewTime(base.Add(time.Second))
 	peer := func(ns, name, key string, created metav1.Time) v1alpha1.WireguardPeer {
 		p := peerIn(ns, name, "vpn", "network")
 		p.Spec.PublicKey, p.CreationTimestamp = key, created
 		return p
 	}
+	held := func(ns, name, key string) map[types.NamespacedName]string {
+		return map[types.NamespacedName]string{{Namespace: ns, Name: name}: key}
+	}
 	type loser struct{ peer, winner string }
 	tests := []struct {
 		name       string
 		peers      []v1alpha1.WireguardPeer
+		current    map[types.NamespacedName]string
 		wantKeep   []string
 		wantLosers []loser
 	}{
 		{
-			name:     "distinct keys are all kept",
-			peers:    []v1alpha1.WireguardPeer{peer("a", "p", "k1", older), peer("b", "p", "k2", newer)},
+			name:     "the key is the value compared",
+			peers:    []v1alpha1.WireguardPeer{peer("a", "p", "k1", old), peer("b", "p", "k2", young)},
 			wantKeep: []string{"a/p", "b/p"},
 		},
 		{
-			name:       "the older peer in another namespace keeps the key",
-			peers:      []v1alpha1.WireguardPeer{peer("attacker", "zzz", "k1", newer), peer("victim", "app", "k1", older)},
-			wantKeep:   []string{"victim/app"},
-			wantLosers: []loser{{"attacker/zzz", "victim/app"}},
+			name:       "the current holder keeps the key against an older peer with a smaller name",
+			peers:      []v1alpha1.WireguardPeer{peer("ns", "aaa", "k1", old), peer("ns", "zzz", "k1", young)},
+			current:    held("ns", "zzz", "k1"),
+			wantKeep:   []string{"ns/zzz"},
+			wantLosers: []loser{{"ns/aaa", "ns/zzz"}},
 		},
 		{
-			name:       "the older peer in one namespace keeps the key",
-			peers:      []v1alpha1.WireguardPeer{peer("a", "second", "k1", newer), peer("a", "first", "k1", older)},
-			wantKeep:   []string{"a/first"},
-			wantLosers: []loser{{"a/second", "a/first"}},
+			name:       "a stale record of another key does not make a holder",
+			peers:      []v1alpha1.WireguardPeer{peer("ns", "aaa", "k1", old), peer("ns", "zzz", "k1", young)},
+			current:    held("ns", "zzz", "k0"),
+			wantKeep:   []string{"ns/aaa"},
+			wantLosers: []loser{{"ns/zzz", "ns/aaa"}},
 		},
 		{
-			name:       "a tie goes to the smaller name, then namespace",
-			peers:      []v1alpha1.WireguardPeer{peer("b", "app", "k1", older), peer("a", "app", "k1", older)},
-			wantKeep:   []string{"a/app"},
-			wantLosers: []loser{{"b/app", "a/app"}},
+			name:       "with no holder the older peer wins even with the larger name",
+			peers:      []v1alpha1.WireguardPeer{peer("ns", "aaa", "k1", young), peer("ns", "zzz", "k1", old)},
+			wantKeep:   []string{"ns/zzz"},
+			wantLosers: []loser{{"ns/aaa", "ns/zzz"}},
+		},
+		{
+			name:       "a tie goes to the smaller name before the smaller namespace",
+			peers:      []v1alpha1.WireguardPeer{peer("a", "b", "k1", old), peer("b", "a", "k1", old)},
+			wantKeep:   []string{"b/a"},
+			wantLosers: []loser{{"a/b", "b/a"}},
+		},
+		{
+			name:  "two holders fall back to the order",
+			peers: []v1alpha1.WireguardPeer{peer("ns", "aaa", "k1", young), peer("ns", "zzz", "k1", old)},
+			current: map[types.NamespacedName]string{
+				{Namespace: "ns", Name: "aaa"}: "k1", {Namespace: "ns", Name: "zzz"}: "k1",
+			},
+			wantKeep:   []string{"ns/zzz"},
+			wantLosers: []loser{{"ns/aaa", "ns/zzz"}},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			keep, losers := dedupePublicKeys(tt.peers)
+			keep, losers := dedupePublicKeys(tt.peers, tt.current)
 
 			var gotKeep []string
 			for _, p := range keep {
@@ -290,5 +317,32 @@ func TestDedupePublicKeys(t *testing.T) {
 				t.Errorf("dedupePublicKeys() losers = %v, want %v", gotLosers, tt.wantLosers)
 			}
 		})
+	}
+}
+
+func TestAdmittedKeys(t *testing.T) {
+	wg := &v1alpha1.Wireguard{ObjectMeta: metav1.ObjectMeta{Name: "vpn", Namespace: "network"}}
+	state, err := json.Marshal(agent.State{Peers: []v1alpha1.WireguardPeer{
+		{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "media"}, Spec: v1alpha1.WireguardPeerSpec{PublicKey: "k1"}},
+	}})
+	if err != nil {
+		t.Fatalf("marshal state: %v", err)
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "vpn", Namespace: "network"},
+		Data:       map[string][]byte{"state.json": state},
+	}
+
+	got, err := (&WireguardReconciler{Client: newFakeClient(t, interceptor.Funcs{}, secret)}).admittedKeys(t.Context(), wg)
+	if err != nil {
+		t.Fatalf("admittedKeys() error = %v", err)
+	}
+	if want := map[types.NamespacedName]string{{Namespace: "media", Name: "app"}: "k1"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("admittedKeys() = %v, want %v", got, want)
+	}
+
+	got, err = (&WireguardReconciler{Client: newFakeClient(t, interceptor.Funcs{})}).admittedKeys(t.Context(), wg)
+	if err != nil || len(got) != 0 {
+		t.Errorf("admittedKeys() with no Secret = %v, %v, want none and no error", got, err)
 	}
 }

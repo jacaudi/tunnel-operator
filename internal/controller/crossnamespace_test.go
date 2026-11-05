@@ -144,6 +144,28 @@ var _ = Describe("cross-namespace attachment", func() {
 		Expect(strings.Count(serverState(gateway)(), originalKey)).Should(Equal(1), "the key reaches state.json once, for the original")
 	})
 
+	It("keeps an admitted peer's public key when an older peer edits its own key to it", func() {
+		gateway := readyGateway("vpn-edit", nil)
+		attacker, _ := createPeer(appNS, "aaa-attacker", gateway)
+		Eventually(peerAddress(attacker), timeout, interval).Should(Equal("10.8.0.2"))
+		victim, victimKey := createPeer(gatewayNS, "victim", gateway)
+		Eventually(peerAddress(victim), timeout, interval).Should(Equal("10.8.0.3"))
+		Eventually(serverState(gateway), timeout, interval).Should(ContainSubstring(victimKey))
+
+		Eventually(func() error {
+			got := &v1alpha1.WireguardPeer{}
+			if err := k8sClient.Get(context.Background(), attacker, got); err != nil {
+				return err
+			}
+			got.Spec.PublicKey = victimKey
+			return k8sClient.Update(context.Background(), got)
+		}, timeout, interval).Should(Succeed())
+
+		Eventually(readyReason(attacker), timeout, interval).Should(Equal(ReasonPublicKeyConflict+"|"+v1alpha1.Pending+"|"), "the peer that took the key is refused, however old it is")
+		Consistently(peerAddress(victim), "2s", interval).Should(Equal("10.8.0.3"), "the holder keeps its address")
+		Expect(strings.Count(serverState(gateway)(), victimKey)).Should(Equal(1), "the key reaches state.json once, for the holder")
+	})
+
 	It("reports WireguardNotFound naming the resolved namespace when the gateway is missing there", func() {
 		peer, _ := createPeer(appNS, "orphan", types.NamespacedName{Namespace: gatewayNS, Name: "absent"})
 

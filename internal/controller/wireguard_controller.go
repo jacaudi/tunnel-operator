@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/jacaudi/wireguard-operator/api/v1alpha1"
+	"github.com/jacaudi/wireguard-operator/internal/agent"
 	"github.com/jacaudi/wireguard-operator/internal/ipam"
 	"github.com/jacaudi/wireguard-operator/internal/resources"
 
@@ -161,6 +162,25 @@ func effectivePeerCIDR4(wg *v1alpha1.Wireguard) string {
 	return ipam.DefaultPeerCIDR4
 }
 
+// admittedKeys returns the public key each peer is listed under in wg's current state.json, keyed by
+// the peer's namespace/name: the keys the server is serving now. It is empty before the Secret exists or when its state is unreadable.
+func (r *WireguardReconciler) admittedKeys(ctx context.Context, wg *v1alpha1.Wireguard) (map[types.NamespacedName]string, error) {
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(wg), secret); err != nil {
+		return nil, client.IgnoreNotFound(err)
+	}
+	var state agent.State
+	if err := json.Unmarshal(secret.Data["state.json"], &state); err != nil {
+		// Nothing is listed: this pass rewrites state.json from the peers it admits.
+		return nil, nil
+	}
+	keys := make(map[types.NamespacedName]string, len(state.Peers))
+	for i := range state.Peers {
+		keys[client.ObjectKeyFromObject(&state.Peers[i])] = state.Peers[i].Spec.PublicKey
+	}
+	return keys, nil
+}
+
 // reconcilePeers lists the peers of wg, records a not-ready status on those the server cannot
 // admit, releases the peers that lose a public key (PublicKeyConflict), clears unusable addresses,
 // releases the addresses of dedupe losers (AddressConflict),
@@ -177,7 +197,11 @@ func (r *WireguardReconciler) reconcilePeers(ctx context.Context, req ctrl.Reque
 	}
 	// A peer whose key an older peer of this server holds is neither allocated nor returned, so
 	// the server never lists two peers under one key.
-	admitted, keyLosers := dedupePublicKeys(admitted)
+	current, err := r.admittedKeys(ctx, wg)
+	if err != nil {
+		return nil, err
+	}
+	admitted, keyLosers := dedupePublicKeys(admitted, current)
 	if err := r.releaseLosers(ctx, keyLosers, func(l conflictLoser) notReady { return publicKeyConflict(l.Winner) }); err != nil {
 		return nil, err
 	}
