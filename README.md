@@ -46,7 +46,7 @@ How traffic flows from an application pod to the VPN provider:
 
 ![Traffic flow: app pod with wg-client sidecar, ClusterIP Service, WireGuard server with gluetun, VPN provider, internet](docs/images/01-traffic-flow.svg)
 
-Where it runs: the operator in `wireguard-system`, and one gateway pod per `Wireguard` in the namespace of its clients.
+Where it runs: the operator in `wireguard-system`, and one gateway pod per `Wireguard`, in its own namespace. Clients can attach from any namespace the gateway allows; see [docs/client-sidecar.md](docs/client-sidecar.md#attaching-to-a-gateway-in-another-namespace).
 
 ![Infrastructure: the operator, Wireguard and WireguardPeer resources, server pod, Service and Secret, app pods, VPN provider](docs/images/02-infrastructure.svg)
 

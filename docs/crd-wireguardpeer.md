@@ -16,7 +16,8 @@ a hand-configured client.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `wireguardRef` | string | — | **Required**, minimum length 1. The name of the `Wireguard` this peer belongs to, in the peer's own namespace. |
+| `wireguardRef` | string | — | **Required**, minimum length 1. The name of the `Wireguard` this peer belongs to, in `wireguardNamespace`, or in the peer's own namespace when that is empty. |
+| `wireguardNamespace` | string | — | The namespace of that `Wireguard`. Empty means the peer's own namespace. A DNS label, at most 63 characters. The `Wireguard` decides whether this namespace may attach: see [`allowedNamespaces`](crd-wireguard.md#spec). |
 | `publicKey` | string | — | The peer's WireGuard public key, as printed by `wg pubkey`. Validated at admission as a canonical 32-byte base64 WireGuard key. To register a peer without a key, omit the field: an explicit `""` is rejected. Without a key the peer gets no address and the server does not admit it. |
 
 > **The operator never mints, stores or reads a peer private key.** A client sidecar generates its
@@ -30,6 +31,9 @@ a hand-configured client.
 | `status` | `pending`, `ready` or `error`. |
 | `message` | Why the peer is in that state. See the table below. |
 | `address` | The peer's IPv4 tunnel address, without a prefix length, allocated by the operator from the server's `peerCIDR`. The server routes `<address>/32` to this peer. Released when the peer loses its key, and re-allocated when it is not a usable host address inside the server's `peerCIDR`. |
+| `endpoint` | The address the peer dials: the `Wireguard`'s `status.endpoint`, `<ClusterIP>:51820`. Copied by the operator once the peer is admitted, and cleared when it is not. |
+| `serverPublicKey` | The `Wireguard`'s `status.publicKey`. Copied and cleared with `endpoint`. |
+| `localCIDRs` | The `Wireguard`'s `spec.localCIDRs`, which the client keeps off the tunnel. Copied and cleared with `endpoint`. |
 | `conditions` | Standard `metav1.Condition` list, keyed by `type`. Empty for a healthy peer. |
 
 What each state means:
@@ -38,7 +42,8 @@ What each state means:
 |---|---|---|
 | `pending` | `Waiting for spec.publicKey` | No `publicKey`; see `PublicKeyMissing` below. |
 | `error` | `spec.publicKey is not a valid WireGuard key` | The stored key is not a canonical WireGuard key; see `InvalidPublicKey` below. |
-| `pending` | `Waiting for wireguard resource '<ref>' to be created` | No `Wireguard` named `wireguardRef` exists in this namespace. |
+| `pending` | `Waiting for wireguard resource '<ref>' to be created` | No `Wireguard` named `wireguardRef` exists in `wireguardNamespace` (the peer's own namespace when empty). |
+| `error` | `Wireguard <namespace>/<name> does not accept peers from namespace <namespace>` | The `Wireguard` sets `spec.allowedNamespaces.from` to `Same` and the peer is in another namespace; see `NamespaceNotAllowed` below. |
 | `pending` | `Address <ip> is held by peer <name>; waiting for a new address` | Another peer of the same server holds this peer's address and wins the dedupe (oldest `creationTimestamp`, smaller name on a tie); see `AddressConflict` below. |
 | `pending` | `No free address in <peerCIDR>` | The server's `peerCIDR` has no free address left. |
 | `ready` | `Peer configured` | The peer is admitted with an address. The server's agent picks it up from the next `state.json` write. |
@@ -51,15 +56,19 @@ What each state means:
 |---|---|---|
 | `Ready=False` | `PublicKeyMissing` | `spec.publicKey` is empty, so the server cannot admit this peer. |
 | `Ready=False` | `InvalidPublicKey` | `spec.publicKey` is not a base64-encoded 32-byte WireGuard key, so the server cannot admit this peer. |
-| `Ready=False` | `WireguardNotFound` | No `Wireguard` named `wireguardRef` exists in the peer's namespace. |
+| `Ready=False` | `WireguardNotFound` | No `Wireguard` named `wireguardRef` exists in `wireguardNamespace`, or in the peer's namespace when that is empty. The message names the namespace it looked in. |
+| `Ready=False` | `NamespaceNotAllowed` | The `Wireguard` admits only its own namespace (`allowedNamespaces.from: Same`), and the peer is in another. The peer is not allocated an address or handed to the server. |
 | `Ready=False` | `AddressConflict` | Another peer holds this peer's address and is the one that wins the dedupe (oldest `creationTimestamp`, smaller name on a tie). The peer gives its address up and is allocated a new one. |
 | `Ready=False` | `AddressPoolExhausted` | The server's `peerCIDR` has no free address for this peer. The server stays `ready` and keeps serving the peers that hold addresses. |
 
 ## Lifecycle notes
 
-- **Same namespace only.** `wireguardRef` resolves in the peer's own namespace; a peer cannot
-  attach to a server elsewhere.
-- **The server finds its peers by `wireguardRef`.** Peers created by this operator version carry no
+- **A peer can attach across namespaces.** Set `wireguardNamespace` and the peer, which stays in
+  its own namespace and keeps its pod as owner, attaches to the `Wireguard` there. The server
+  lists peers in every namespace, and one address pool covers them all, so no two peers share an
+  address whatever their namespace. A `Wireguard` admits every namespace unless its
+  `allowedNamespaces.from` says `Same`.
+- **The server finds its peers by `wireguardRef` and `wireguardNamespace`.** Peers created by this operator version carry no
   ownerReference to their `Wireguard` and are not deleted with it. Peers created by an earlier
   version keep theirs. Deleting the server leaves peers created by this version in place, reading
   `pending` with `WireguardNotFound`.

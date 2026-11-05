@@ -21,6 +21,7 @@ Source of truth: [`api/v1alpha1/wireguard_types.go`](../api/v1alpha1/wireguard_t
 | `nodeSelector` | map[string]string | — | Copied to the server pod's `nodeSelector`. |
 | `tolerations` | []`Toleration` | — | Copied to the server pod's `tolerations`. |
 | `agent.resources` | `ResourceRequirements` | — | Requests and limits for the `agent` container. The `sysctl` init container gets none. |
+| `allowedNamespaces.from` | `All` or `Same` | `All` | Which namespaces may attach peers to this server. `All` (also when `allowedNamespaces` is omitted) admits a peer in any namespace; `Same` admits only peers in the server's own namespace. A peer from another namespace under `Same` reads `Ready=False` with reason `NamespaceNotAllowed`, is allocated no address and is left out of the server's state; see [`WireguardPeer`](crd-wireguardpeer.md#conditions). Any other value is rejected at admission. |
 
 `gluetun` may be empty (`gluetun: {}`), but then gluetun has no provider configuration, so a useful
 gateway sets `envFrom` or `env`.
@@ -68,7 +69,7 @@ and are deleted with it.
 
 | Kind | Name | Contents |
 |---|---|---|
-| `Secret` | `<name>` | `privateKey` and `publicKey` (the server key pair), and `state.json` (the server's name, namespace and spec **without `spec.gluetun`**, plus its admitted peers, those with a valid key and an address, read by the agent). `spec.gluetun` is dropped so that provider credentials never reach a second Secret. |
+| `Secret` | `<name>` | `privateKey` and `publicKey` (the server key pair), and `state.json` (the server's name, namespace and spec **without `spec.gluetun` and `spec.allowedNamespaces`**, plus its admitted peers, those with a valid key and an address, read by the agent). `spec.gluetun` is dropped so that provider credentials never reach a second Secret. |
 | `Service` | `<name>-svc` | `ClusterIP`, one port `wireguard`, UDP `51820`. |
 | `Deployment` | `<name>-dep` | One replica, strategy `Recreate`: the old pod is gone before the new one starts, because one pod owns the key and the tunnel. Init container `sysctl` (privileged, sets `net.ipv4.ip_forward=1`). Container `agent` (`NET_ADMIN`, read-only root filesystem, UDP `51820`, readiness `GET /health` with a 5 s timeout, liveness TCP on `8080`). Container `gluetun` (the pinned image `ghcr.io/qdm12/gluetun:v3.41.3@sha256:…`, `NET_ADMIN`, writable root filesystem, no probes of its own, and a `postStart` hook that deletes a stale `ip rule` for table `51820` so an abruptly restarted gluetun can start). Seccomp `RuntimeDefault`; no service-account token. |
 
@@ -84,6 +85,13 @@ and are deleted with it.
 - **Set `peerCIDR` before you add peers.** Changing it re-allocates every peer whose address falls
   outside the new range, and a running server keeps its old `wg0` address until its pod is
   replaced.
+- **Peers attach from any namespace by default.** The server lists the `WireguardPeer`s of every
+  namespace that name it (`wireguardRef` plus `wireguardNamespace`), allocates their addresses from
+  one `peerCIDR`, and copies its `status.endpoint`, `status.publicKey` and `spec.localCIDRs` into
+  each admitted peer's status, so a client reads only its own peer. Set
+  `allowedNamespaces.from: Same` to refuse every namespace but the server's own. Changing it takes
+  effect on the next reconcile: peers it newly refuses lose their address and status copy, and
+  peers it newly admits are allocated one.
 - **Peers outlive their server.** Peers created by this operator version carry no
   ownerReference to their `Wireguard` and are not deleted with it. Peers created by an earlier
   version keep theirs.
