@@ -57,6 +57,15 @@ func TestDesiredTunnel(t *testing.T) {
 			wantErr:     "has no status.address",
 		},
 		{
+			name: "no address, and the gateway says why",
+			mutate: func(p *v1alpha1.WireguardPeer) {
+				p.Status.Address = ""
+				p.Status.Conditions = []metav1.Condition{{Type: "Ready", Status: metav1.ConditionFalse, Reason: "NamespaceNotAllowed", Message: "Wireguard network/vpn does not accept peers"}}
+			},
+			wantWaiting: true,
+			wantErr:     "has no status.address (Ready=False NamespaceNotAllowed: Wireguard network/vpn does not accept peers)",
+		},
+		{
 			name:        "no endpoint",
 			mutate:      func(p *v1alpha1.WireguardPeer) { p.Status.Endpoint = "" },
 			wantWaiting: true,
