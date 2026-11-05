@@ -117,6 +117,7 @@ var _ = Describe("status generation stamp", func() {
 		hook := &genHookClient{Client: k8sClient, key: key}
 		r := &WireguardReconciler{
 			Client:               hook,
+			APIReader:            k8sClient,
 			Scheme:               scheme.Scheme,
 			AgentImage:           wgTestImage,
 			AgentImagePullPolicy: corev1.PullIfNotPresent,

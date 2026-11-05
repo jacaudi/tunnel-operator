@@ -25,13 +25,17 @@ import (
 	"time"
 
 	vpnv1alpha1 "github.com/jacaudi/wireguard-operator/api/v1alpha1"
+	"github.com/jacaudi/wireguard-operator/internal/resources"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -95,8 +99,13 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
 
+	// The manager caches only labelled pods, as in cmd/manager: any reader of Pods through the cache sees
+	// nothing else, so a spec that reads an unlabelled pod through it fails here as it would in a cluster.
 	k8sManager, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme: scheme.Scheme,
+		Cache: cache.Options{ByObject: map[client.Object]cache.ByObject{
+			&corev1.Pod{}: {Label: labels.SelectorFromSet(labels.Set{resources.LabelEnabled: "true"})},
+		}},
 	})
 	Expect(err).ToNot(HaveOccurred())
 
@@ -107,6 +116,7 @@ var _ = BeforeSuite(func() {
 		Scheme:               k8sManager.GetScheme(),
 		AgentImagePullPolicy: "IfNotPresent",
 		AgentImage:           wgTestImage,
+		APIReader:            k8sManager.GetAPIReader(),
 	}).SetupWithManager(k8sManager)
 	Expect(err).ToNot(HaveOccurred())
 

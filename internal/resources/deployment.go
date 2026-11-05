@@ -18,6 +18,7 @@ package resources
 
 import (
 	"fmt"
+	"maps"
 
 	"github.com/jacaudi/wireguard-operator/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -55,6 +56,8 @@ func NewDeploymentBuilder(scheme *runtime.Scheme, agentImage string, agentImageP
 // ForWireguard creates a deployment for a Wireguard server.
 func (b *DeploymentBuilder) ForWireguard(wg *v1alpha1.Wireguard) (*appsv1.Deployment, error) {
 	ls := LabelsForWireguard(wg.Name)
+	podLabels := maps.Clone(ls)
+	podLabels[LabelComponent] = ComponentGateway
 	replicas := int32(1)
 
 	// Security context settings
@@ -78,7 +81,8 @@ func (b *DeploymentBuilder) ForWireguard(wg *v1alpha1.Wireguard) (*appsv1.Deploy
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: ls,
+					// Not in the selector, which is immutable; see LabelComponent.
+					Labels: podLabels,
 				},
 				Spec: corev1.PodSpec{
 					NodeSelector: wg.Spec.NodeSelector,

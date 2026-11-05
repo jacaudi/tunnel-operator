@@ -60,6 +60,10 @@ type WireguardReconciler struct {
 	AgentImage           string
 	AgentImagePullPolicy corev1.PullPolicy
 
+	// APIReader reads straight from the apiserver. It serves the reads the manager's filtered Pod cache
+	// cannot: the cache holds only pods labelled for injection, so the gateway pods are invisible to Client.
+	APIReader client.Reader
+
 	// Resource builders
 	secretBuilder     *resources.SecretBuilder
 	serviceBuilder    *resources.ServiceBuilder
@@ -552,7 +556,7 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			}
 
 			pods := &corev1.PodList{}
-			if err := r.List(ctx, pods, client.InNamespace(wireguard.Namespace), client.MatchingLabels{"app": "wireguard", "instance": wireguard.Name}); err != nil {
+			if err := r.APIReader.List(ctx, pods, client.InNamespace(wireguard.Namespace), client.MatchingLabels{"app": "wireguard", "instance": wireguard.Name}); err != nil {
 				log.Error(err, "Failed to fetch list of pods")
 				return ctrl.Result{}, err
 			}
