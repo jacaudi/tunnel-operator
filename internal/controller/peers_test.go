@@ -121,6 +121,16 @@ func TestPeerStatusMatches(t *testing.T) {
 			mutate: func(p *v1alpha1.WireguardPeer) { p.Status.Endpoint = "10.96.0.9:51820" },
 			want:   false,
 		},
+		{
+			name:   "server public key not yet cleared",
+			mutate: func(p *v1alpha1.WireguardPeer) { p.Status.ServerPublicKey = "server-key" },
+			want:   false,
+		},
+		{
+			name:   "localCIDRs not yet cleared",
+			mutate: func(p *v1alpha1.WireguardPeer) { p.Status.LocalCIDRs = []string{"10.96.0.0/12"} },
+			want:   false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

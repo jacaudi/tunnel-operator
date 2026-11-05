@@ -212,6 +212,7 @@ func TestAdmitPeersRefusesAForeignNamespaceUnderSame(t *testing.T) {
 	own, foreign := peerIn("network", "own", "vpn", ""), peerIn("media", "app", "vpn", "network")
 	own.Spec.PublicKey, foreign.Spec.PublicKey = key, key
 	foreign.Status.Address = "10.8.0.2" // an address it held while the gateway still allowed it
+	foreign.Status.Endpoint, foreign.Status.ServerPublicKey, foreign.Status.LocalCIDRs = "10.96.0.9:51820", "server-key", []string{"10.96.0.0/12"}
 	c := newFakeClient(t, interceptor.Funcs{}, &own, &foreign)
 	r := &WireguardReconciler{Client: c}
 
@@ -228,6 +229,9 @@ func TestAdmitPeersRefusesAForeignNamespaceUnderSame(t *testing.T) {
 	}
 	if got.Status.Address != "" || got.Status.Status != v1alpha1.Error {
 		t.Errorf("foreign peer status = %+v, want its address released and status %s", got.Status, v1alpha1.Error)
+	}
+	if got.Status.Endpoint != "" || got.Status.ServerPublicKey != "" || len(got.Status.LocalCIDRs) != 0 {
+		t.Errorf("foreign peer status = %+v, want its copy of the gateway identity cleared", got.Status)
 	}
 	if c := meta.FindStatusCondition(got.Status.Conditions, ConditionReady); c == nil || c.Reason != ReasonNamespaceNotAllowed {
 		t.Errorf("foreign peer Ready condition = %+v, want reason %s", c, ReasonNamespaceNotAllowed)
