@@ -32,6 +32,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -121,6 +122,15 @@ var _ = BeforeSuite(func() {
 		AgentImagePullPolicy: "IfNotPresent",
 		AgentImage:           wgTestImage,
 		APIReader:            k8sManager.GetAPIReader(),
+	}).SetupWithManager(k8sManager)
+	Expect(err).ToNot(HaveOccurred())
+
+	// The operator's own namespace is wg-system: only a Wireguard there can be the default gateway.
+	err = (&InjectionPolicyReconciler{
+		Client:            k8sManager.GetClient(),
+		Discovery:         discovery.NewDiscoveryClientForConfigOrDie(cfg),
+		Image:             wgTestImage,
+		OperatorNamespace: testOperatorNamespace,
 	}).SetupWithManager(k8sManager)
 	Expect(err).ToNot(HaveOccurred())
 
