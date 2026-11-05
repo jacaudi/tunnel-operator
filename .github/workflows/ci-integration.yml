@@ -42,8 +42,12 @@ jobs:
           # tools/setup-envtest is a SEPARATE module with its own tag line (its first
           # release is v0.24.0), so a controller-runtime version number is not a valid
           # version for it. Its version is independent of the library's: this is a
-          # downloader for apiserver/etcd binaries. What has to match this repo's
-          # k8s.io/* v0.37 client stack is the ASSET version below, not this.
+          # downloader for apiserver/etcd binaries. The apiserver version it fetches is the
+          # ASSET version below, not this.
+          #
+          # setup-envtest v0.25.2 has FOUR COPIES that no tool can share: here, Makefile's
+          # `$(ENVTEST)` recipe, .taskfiles/go.yml's install hint and images/test/Dockerfile.
+          # Change one, change all four.
           #
           # The stock renovate annotation named controller-runtime, which is the
           # wrong module for this pin and would propose versions that cannot
@@ -58,9 +62,10 @@ jobs:
           # non-reproducible and lets an upstream k8s release turn the fleet red
           # overnight with nothing to bisect against.
           #
-          # 1.34.1: the Kubernetes floor this repo supports, matching its k8s.io/*
-          # v0.37 client stack, with the MutatingAdmissionPolicy beta enabled by the
-          # suite (see internal/controller/suite_test.go). THIS NUMBER HAS FOUR
+          # 1.34.1: the minimum Kubernetes version this repo supports. It is older than
+          # the k8s.io/* v0.37 client libraries (which correspond to 1.37) on purpose:
+          # do not raise it to match them. The suite enables the MutatingAdmissionPolicy
+          # beta (see internal/controller/suite_test.go). THIS NUMBER HAS FOUR
           # COPIES that no tool can share: here, Makefile's ENVTEST_K8S_VERSION, the
           # fallback in .taskfiles/go.yml's `integration` task, and the default in
           # hack/test-in-docker.sh. Change one, change all four.

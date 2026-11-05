@@ -38,10 +38,16 @@ var legacyFieldManagers = sets.New("manager")
 //
 // What the operator ends up owning is what the unstructured conversion of the built object emits,
 // which matches json.Marshal, and is not the same as "the fields the builder sets", in either
-// direction. Zero-valued structs are emitted despite omitempty -- so the operator owns spec.strategy, the agent container's resources, and
-// the pod template's creationTimestamp, none of which any builder sets. Zero-valued scalars with
-// omitempty are dropped -- so a nodePort of 0 is not owned, which is what lets the apiserver keep
-// its own allocation.
+// direction. Zero-valued structs are emitted despite omitempty -- so the operator owns
+// spec.strategy and the agent container's resources, neither of which any builder sets.
+// Zero-valued scalars with omitempty are dropped -- so a nodePort of 0 is not owned, which is
+// what lets the apiserver keep its own allocation.
+//
+// client.ApplyConfigurationFromUnstructured is used on an object converted from a typed API
+// object, despite upstream's warning ("Do not use Unstructured objects here that were generated
+// from API objects", controller-runtime applyconfigurations.go). The warning is accepted
+// deliberately: the request body is semantically identical to the former json.Marshal body, so
+// ownership is exactly as described above.
 //
 // ForceOwnership is unconditional. A conflict is only raised when the applied value differs from
 // a value owned by another manager, so the first apply over an object previously written by

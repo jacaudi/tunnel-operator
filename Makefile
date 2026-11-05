@@ -202,5 +202,7 @@ $(KUSTOMIZE): | $(LOCALBIN)
 
 .PHONY: envtest
 envtest: $(ENVTEST) ## Download envtest-setup locally if necessary.
+# setup-envtest v0.25.2 has four copies: here, .github/workflows/ci-integration.yml,
+# .taskfiles/go.yml (the install hint) and images/test/Dockerfile. Change all four together.
 $(ENVTEST): | $(LOCALBIN)
 	GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.25.2
