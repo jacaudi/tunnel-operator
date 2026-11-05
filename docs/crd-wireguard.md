@@ -21,7 +21,7 @@ Source of truth: [`api/v1alpha1/wireguard_types.go`](../api/v1alpha1/wireguard_t
 | `nodeSelector` | map[string]string | — | Copied to the server pod's `nodeSelector`. |
 | `tolerations` | []`Toleration` | — | Copied to the server pod's `tolerations`. |
 | `agent.resources` | `ResourceRequirements` | — | Requests and limits for the `agent` container. The `sysctl` init container gets none. |
-| `allowedNamespaces.from` | `All` or `Same` | `All` | Which namespaces may attach peers to this server. `All` (also when `allowedNamespaces` is omitted) admits a peer in any namespace; `Same` admits only peers in the server's own namespace. A peer from another namespace under `Same` reads `Ready=False` with reason `NamespaceNotAllowed`, is allocated no address and is left out of the server's state; see [`WireguardPeer`](crd-wireguardpeer.md#conditions). Any other value is rejected at admission. |
+| `allowedNamespaces.from` | `All` or `Same` | `All` | Which namespaces may attach peers to this server. `All` (also when `allowedNamespaces` is omitted) admits a peer in any namespace; `Same` admits only peers in the server's own namespace. A peer from another namespace under `Same` reads `Ready=False` with reason `NamespaceNotAllowed`, is allocated no address and is left out of the server's state; see [`WireguardPeer`](crd-wireguardpeer.md#conditions). Any other value is rejected at admission. With `All`, any namespace whose users may create `WireguardPeer`s can attach to the server, and can learn from its own peer's status whether the server exists and what its endpoint and public key are. Use `Same` to restrict that. |
 
 `gluetun` may be empty (`gluetun: {}`), but then gluetun has no provider configuration, so a useful
 gateway sets `envFrom` or `env`.

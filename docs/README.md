@@ -21,15 +21,19 @@ New here? Start with the [Quick start in the root README](../README.md#quick-sta
 - **`Wireguard`** reconcile — server key Secret, single-replica server Deployment, ClusterIP
   Service on UDP `51820`, all applied with Server-Side Apply and garbage-collected with the CR.
 - **`WireguardPeer`** registration — `status.address` allocation from `peerCIDR`,
-  `PublicKeyMissing`/`InvalidPublicKey` reporting, address dedupe.
+  `PublicKeyMissing`/`InvalidPublicKey`/`NamespaceNotAllowed` reporting, address and public key
+  dedupe.
 - **Agent** — kernel WireGuard with a wireguard-go fallback; adds, updates and removes peers by
   public key as `state.json` changes; `/health` readiness.
 - **Egress through gluetun** — the server pod runs a gluetun container, forwards peer traffic into
   its tunnel and fails closed by routing; `Ready` waits for gluetun to be healthy. See
   [gluetun-egress.md](gluetun-egress.md).
 - **Client sidecar** — an init container with `restartPolicy: Always` that registers its pod as a
-  `WireguardPeer`, configures `wg0` from the server's status and routes the pod's internet traffic
+  `WireguardPeer`, configures `wg0` from its peer's status and routes the pod's internet traffic
   through it. See [client-sidecar.md](client-sidecar.md).
+- **Cross-namespace attachment** — a peer names a `Wireguard` in another namespace with
+  `wireguardNamespace`, and the gateway admits or refuses that namespace through
+  `allowedNamespaces`. See [client-sidecar.md](client-sidecar.md#attaching-to-a-gateway-in-another-namespace).
 
 ## Not yet implemented (designed)
 
