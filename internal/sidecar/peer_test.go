@@ -109,6 +109,20 @@ func TestDesiredPeer(t *testing.T) {
 	}
 }
 
+func TestDesiredPeerNamesTheGatewayNamespace(t *testing.T) {
+	cfg := testConfig()
+	cfg.WireguardNamespace = "network"
+
+	got := desiredPeer(cfg, testPublicKey)
+
+	if want := (v1alpha1.WireguardPeerSpec{PublicKey: testPublicKey, WireguardRef: "vpn", WireguardNamespace: "network"}); got.Spec != want {
+		t.Errorf("spec = %+v, want %+v", got.Spec, want)
+	}
+	if got.Namespace != "media" {
+		t.Errorf("peer namespace = %q, want the pod's own, media", got.Namespace)
+	}
+}
+
 func TestDecidePeer(t *testing.T) {
 	want := desiredPeer(testConfig(), testPublicKey)
 	tests := []struct {
@@ -133,6 +147,11 @@ func TestDecidePeer(t *testing.T) {
 		{
 			name:     "this pod, other wireguardRef",
 			existing: peerWith(func(p *v1alpha1.WireguardPeer) { p.Spec.WireguardRef = "other" }),
+			want:     actionReplace,
+		},
+		{
+			name:     "this pod, other wireguardNamespace",
+			existing: peerWith(func(p *v1alpha1.WireguardPeer) { p.Spec.WireguardNamespace = "network" }),
 			want:     actionReplace,
 		},
 		{

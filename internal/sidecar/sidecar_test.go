@@ -41,8 +41,7 @@ func (f *fakeDatapath) Apply(key wgtypes.Key, t Tunnel) error {
 	return f.err
 }
 
-// stepFixture returns a runner over a fake client seeded with objs, the client, the fake datapath and
-// the Wireguard vpn in namespace media.
+// stepFixture returns a runner over a fake client seeded with objs, the client and the fake datapath.
 func stepFixture(t *testing.T, objs ...ctrlclient.Object) (*runner, ctrlclient.Client, *fakeDatapath) {
 	t.Helper()
 	c, _ := newClient(t, nil, objs...)
@@ -50,19 +49,21 @@ func stepFixture(t *testing.T, objs ...ctrlclient.Object) (*runner, ctrlclient.C
 	return &runner{r: c, w: c, dp: dp, cfg: testConfig(), key: newPrivateKey(t)}, c, dp
 }
 
-// completeWireguard returns the Task 3 Wireguard fixture in namespace media, and its server key.
-func completeWireguard(t *testing.T) (*v1alpha1.Wireguard, wgtypes.Key) {
-	t.Helper()
-	_, wg, serverKey := tunnelFixture(t)
-	wg.Namespace = "media"
-	return wg, serverKey
-}
-
 // addressedPeer returns the peer rn registers, with status.address address.
 func addressedPeer(rn *runner, address string) *v1alpha1.WireguardPeer {
 	p := desiredPeer(rn.cfg, rn.key.PublicKey().String())
 	p.Status.Address = address
 	return p
+}
+
+// publishedPeer returns the peer rn registers, with the status the operator publishes once the gateway
+// admits it, and the gateway's public key.
+func publishedPeer(t *testing.T, rn *runner) (*v1alpha1.WireguardPeer, wgtypes.Key) {
+	t.Helper()
+	fixture, serverKey := tunnelFixture(t)
+	p := desiredPeer(rn.cfg, rn.key.PublicKey().String())
+	p.Status = fixture.Status
+	return p, serverKey
 }
 
 func TestStepRegistersAndWaits(t *testing.T) {
@@ -82,8 +83,7 @@ func TestStepRegistersAndWaits(t *testing.T) {
 }
 
 func TestStepWaitsForAddress(t *testing.T) {
-	wg, _ := completeWireguard(t)
-	rn, _, dp := stepFixture(t, wg)
+	rn, _, dp := stepFixture(t)
 	if err := rn.w.Create(t.Context(), addressedPeer(rn, "")); err != nil {
 		t.Fatalf("seed peer: %v", err)
 	}
@@ -97,15 +97,15 @@ func TestStepWaitsForAddress(t *testing.T) {
 	}
 }
 
-func TestStepWaitsForWireguard(t *testing.T) {
+func TestStepWaitsForGatewayStatus(t *testing.T) {
 	rn, _, dp := stepFixture(t)
 	if err := rn.w.Create(t.Context(), addressedPeer(rn, "10.8.0.7")); err != nil {
 		t.Fatalf("seed peer: %v", err)
 	}
 
 	err := rn.step(t.Context())
-	if !errors.Is(err, errWaiting) || !strings.Contains(err.Error(), "Wireguard media/vpn not found") {
-		t.Fatalf("step = %v, want errWaiting containing %q", err, "Wireguard media/vpn not found")
+	if !errors.Is(err, errWaiting) || !strings.Contains(err.Error(), "has no status.endpoint") {
+		t.Fatalf("step = %v, want errWaiting containing %q", err, "has no status.endpoint")
 	}
 	if len(dp.calls) != 0 {
 		t.Errorf("datapath received %d calls, want 0", len(dp.calls))
@@ -113,9 +113,9 @@ func TestStepWaitsForWireguard(t *testing.T) {
 }
 
 func TestStepApplies(t *testing.T) {
-	wg, serverKey := completeWireguard(t)
-	rn, _, dp := stepFixture(t, wg)
-	if err := rn.w.Create(t.Context(), addressedPeer(rn, "10.8.0.7")); err != nil {
+	rn, _, dp := stepFixture(t)
+	peer, serverKey := publishedPeer(t, rn)
+	if err := rn.w.Create(t.Context(), peer); err != nil {
 		t.Fatalf("seed peer: %v", err)
 	}
 
@@ -137,9 +137,8 @@ func TestStepApplies(t *testing.T) {
 }
 
 func TestStepRecreatesDeletedPeer(t *testing.T) {
-	wg, _ := completeWireguard(t)
-	rn, c, dp := stepFixture(t, wg)
-	peer := addressedPeer(rn, "10.8.0.7")
+	rn, c, dp := stepFixture(t)
+	peer, _ := publishedPeer(t, rn)
 	if err := c.Create(t.Context(), peer); err != nil {
 		t.Fatalf("seed peer: %v", err)
 	}
@@ -164,10 +163,10 @@ func TestStepRecreatesDeletedPeer(t *testing.T) {
 }
 
 func TestStepReturnsApplyError(t *testing.T) {
-	wg, _ := completeWireguard(t)
-	rn, _, dp := stepFixture(t, wg)
+	rn, _, dp := stepFixture(t)
 	dp.err = errors.New("boom")
-	if err := rn.w.Create(t.Context(), addressedPeer(rn, "10.8.0.7")); err != nil {
+	peer, _ := publishedPeer(t, rn)
+	if err := rn.w.Create(t.Context(), peer); err != nil {
 		t.Fatalf("seed peer: %v", err)
 	}
 
@@ -180,9 +179,9 @@ func TestStepReturnsApplyError(t *testing.T) {
 // seededRunner returns a runner whose pass reaches the datapath.
 func seededRunner(t *testing.T) (*runner, *fakeDatapath) {
 	t.Helper()
-	wg, _ := completeWireguard(t)
-	rn, _, dp := stepFixture(t, wg)
-	if err := rn.w.Create(t.Context(), addressedPeer(rn, "10.8.0.7")); err != nil {
+	rn, _, dp := stepFixture(t)
+	peer, _ := publishedPeer(t, rn)
+	if err := rn.w.Create(t.Context(), peer); err != nil {
 		t.Fatalf("seed peer: %v", err)
 	}
 	return rn, dp

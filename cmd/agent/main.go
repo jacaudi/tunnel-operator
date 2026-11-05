@@ -215,7 +215,7 @@ func runClient(args []string) int {
 	var check bool
 	var verbosity int
 	fs := flag.NewFlagSet("client", flag.ContinueOnError)
-	fs.StringVar(&wireguardName, "wireguard", "", "the Wireguard in this pod's namespace to attach to")
+	fs.StringVar(&wireguardName, "wireguard", "", "the Wireguard to attach to: a name in this pod's namespace, or namespace/name")
 	fs.BoolVar(&check, "check", false, "run the startup check and exit")
 	fs.IntVar(&verbosity, "v", 0, "the verbosity level; 1 also logs every applied pass")
 	if err := fs.Parse(args); err != nil {

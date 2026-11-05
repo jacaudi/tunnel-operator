@@ -16,25 +16,27 @@ import (
 // errWaiting marks a configuration the operator has not finished publishing yet.
 var errWaiting = errors.New("waiting for the operator")
 
-// Tunnel is the client's WireGuard configuration, read from its WireguardPeer and the Wireguard.
+// Tunnel is the client's WireGuard configuration, read from its WireguardPeer's status.
 type Tunnel struct {
 	Address    netip.Prefix   // the peer's status.address, as a /32
-	ServerKey  wgtypes.Key    // the Wireguard's status.publicKey
-	Endpoint   netip.AddrPort // the Wireguard's status.endpoint
-	LocalCIDRs []netip.Prefix // the Wireguard's spec.localCIDRs, masked, in spec order
+	ServerKey  wgtypes.Key    // the peer's status.serverPublicKey
+	Endpoint   netip.AddrPort // the peer's status.endpoint
+	LocalCIDRs []netip.Prefix // the peer's status.localCIDRs, masked, in status order
 }
 
-// desiredTunnel returns the Tunnel for peer and wg. While peer has no status.address or wg has no
-// status.endpoint or status.publicKey it returns an error wrapping errWaiting; a value that does not
-// parse, or an empty spec.localCIDRs, is a plain error.
-func desiredTunnel(peer *v1alpha1.WireguardPeer, wg *v1alpha1.Wireguard) (Tunnel, error) {
+// desiredTunnel returns the Tunnel for peer. While peer lacks status.address, status.endpoint,
+// status.serverPublicKey or status.localCIDRs it returns an error wrapping errWaiting; a value that
+// does not parse is a plain error.
+func desiredTunnel(peer *v1alpha1.WireguardPeer) (Tunnel, error) {
 	switch {
 	case peer.Status.Address == "":
 		return Tunnel{}, fmt.Errorf("%w: WireguardPeer %s has no status.address", errWaiting, peer.Name)
-	case wg.Status.Endpoint == "":
-		return Tunnel{}, fmt.Errorf("%w: Wireguard %s has no status.endpoint", errWaiting, wg.Name)
-	case wg.Status.PublicKey == "":
-		return Tunnel{}, fmt.Errorf("%w: Wireguard %s has no status.publicKey", errWaiting, wg.Name)
+	case peer.Status.Endpoint == "":
+		return Tunnel{}, fmt.Errorf("%w: WireguardPeer %s has no status.endpoint", errWaiting, peer.Name)
+	case peer.Status.ServerPublicKey == "":
+		return Tunnel{}, fmt.Errorf("%w: WireguardPeer %s has no status.serverPublicKey", errWaiting, peer.Name)
+	case len(peer.Status.LocalCIDRs) == 0:
+		return Tunnel{}, fmt.Errorf("%w: WireguardPeer %s has no status.localCIDRs", errWaiting, peer.Name)
 	}
 
 	addr, err := netip.ParseAddr(peer.Status.Address)
@@ -44,15 +46,15 @@ func desiredTunnel(peer *v1alpha1.WireguardPeer, wg *v1alpha1.Wireguard) (Tunnel
 	if !addr.Is4() {
 		return Tunnel{}, fmt.Errorf("status.address %q of WireguardPeer %s is not IPv4", peer.Status.Address, peer.Name)
 	}
-	endpoint, err := netip.ParseAddrPort(wg.Status.Endpoint)
+	endpoint, err := netip.ParseAddrPort(peer.Status.Endpoint)
 	if err != nil {
-		return Tunnel{}, fmt.Errorf("parse status.endpoint %q of Wireguard %s: %w", wg.Status.Endpoint, wg.Name, err)
+		return Tunnel{}, fmt.Errorf("parse status.endpoint %q of WireguardPeer %s: %w", peer.Status.Endpoint, peer.Name, err)
 	}
-	serverKey, err := wgtypes.ParseKey(wg.Status.PublicKey)
+	serverKey, err := wgtypes.ParseKey(peer.Status.ServerPublicKey)
 	if err != nil {
-		return Tunnel{}, fmt.Errorf("parse status.publicKey of Wireguard %s: %w", wg.Name, err)
+		return Tunnel{}, fmt.Errorf("parse status.serverPublicKey of WireguardPeer %s: %w", peer.Name, err)
 	}
-	cidrs, err := parseLocalCIDRs(wg)
+	cidrs, err := parseLocalCIDRs(peer)
 	if err != nil {
 		return Tunnel{}, err
 	}
@@ -65,20 +67,16 @@ func desiredTunnel(peer *v1alpha1.WireguardPeer, wg *v1alpha1.Wireguard) (Tunnel
 	}, nil
 }
 
-// parseLocalCIDRs returns wg's spec.localCIDRs, masked, in spec order.
-func parseLocalCIDRs(wg *v1alpha1.Wireguard) ([]netip.Prefix, error) {
-	if len(wg.Spec.LocalCIDRs) == 0 {
-		//nolint:staticcheck // ST1005: the message starts with the Kubernetes kind the user sees
-		return nil, fmt.Errorf("Wireguard %s has no spec.localCIDRs", wg.Name)
-	}
-	cidrs := make([]netip.Prefix, 0, len(wg.Spec.LocalCIDRs))
-	for _, c := range wg.Spec.LocalCIDRs {
+// parseLocalCIDRs returns peer's status.localCIDRs, masked, in status order.
+func parseLocalCIDRs(peer *v1alpha1.WireguardPeer) ([]netip.Prefix, error) {
+	cidrs := make([]netip.Prefix, 0, len(peer.Status.LocalCIDRs))
+	for _, c := range peer.Status.LocalCIDRs {
 		p, err := netip.ParsePrefix(c)
 		if err != nil {
-			return nil, fmt.Errorf("parse spec.localCIDRs entry %q of Wireguard %s: %w", c, wg.Name, err)
+			return nil, fmt.Errorf("parse status.localCIDRs entry %q of WireguardPeer %s: %w", c, peer.Name, err)
 		}
 		if p.Bits() == 0 {
-			return nil, fmt.Errorf("spec.localCIDRs entry %q of Wireguard %s covers every address, so nothing would go through the tunnel", c, wg.Name)
+			return nil, fmt.Errorf("status.localCIDRs entry %q of WireguardPeer %s covers every address, so nothing would go through the tunnel", c, peer.Name)
 		}
 		cidrs = append(cidrs, p.Masked())
 	}

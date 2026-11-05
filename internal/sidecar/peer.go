@@ -17,14 +17,14 @@ type peerAction string
 
 const (
 	actionCreate  peerAction = "create"  // no such peer exists
-	actionKeep    peerAction = "keep"    // it is this pod's, with this pod's key and wireguardRef
-	actionReplace peerAction = "replace" // a Pod controls it, but not this pod, or it carries another key or wireguardRef
+	actionKeep    peerAction = "keep"    // it is this pod's, with this pod's key, wireguardRef and wireguardNamespace
+	actionReplace peerAction = "replace" // a Pod controls it, but not this pod, or it carries another key, wireguardRef or wireguardNamespace
 	actionRefuse  peerAction = "refuse"  // no Pod controls it, so the client must not delete it
 )
 
 // desiredPeer returns the WireguardPeer the pod registers: named after the pod, in its namespace, with
-// spec.wireguardRef cfg.Wireguard and spec.publicKey publicKey, and the pod as its only owner and
-// controller. blockOwnerDeletion stays unset; setting it would need update on pods/finalizers.
+// spec.wireguardRef cfg.Wireguard, spec.wireguardNamespace cfg.WireguardNamespace and spec.publicKey
+// publicKey, and the pod as its only owner and controller. blockOwnerDeletion stays unset; setting it would need update on pods/finalizers.
 func desiredPeer(cfg Config, publicKey string) *v1alpha1.WireguardPeer {
 	return &v1alpha1.WireguardPeer{
 		ObjectMeta: metav1.ObjectMeta{
@@ -38,7 +38,7 @@ func desiredPeer(cfg Config, publicKey string) *v1alpha1.WireguardPeer {
 				Controller: new(true),
 			}},
 		},
-		Spec: v1alpha1.WireguardPeerSpec{PublicKey: publicKey, WireguardRef: cfg.Wireguard},
+		Spec: v1alpha1.WireguardPeerSpec{PublicKey: publicKey, WireguardRef: cfg.Wireguard, WireguardNamespace: cfg.WireguardNamespace},
 	}
 }
 
@@ -55,7 +55,7 @@ func decidePeer(existing, want *v1alpha1.WireguardPeer) peerAction {
 	if ctl.UID != metav1.GetControllerOf(want).UID {
 		return actionReplace
 	}
-	if existing.Spec.PublicKey != want.Spec.PublicKey || existing.Spec.WireguardRef != want.Spec.WireguardRef {
+	if existing.Spec.PublicKey != want.Spec.PublicKey || existing.Spec.WireguardRef != want.Spec.WireguardRef || existing.Spec.WireguardNamespace != want.Spec.WireguardNamespace {
 		return actionReplace
 	}
 	return actionKeep

@@ -25,26 +25,26 @@ func newPrivateKey(t *testing.T) wgtypes.Key {
 	return k
 }
 
-// tunnelFixture returns the peer app-1 and the Wireguard vpn, both complete, and the server's public key.
-func tunnelFixture(t *testing.T) (*v1alpha1.WireguardPeer, *v1alpha1.Wireguard, wgtypes.Key) {
+// tunnelFixture returns the peer app-1, complete as the operator publishes it, and the server's public key.
+func tunnelFixture(t *testing.T) (*v1alpha1.WireguardPeer, wgtypes.Key) {
 	t.Helper()
 	serverKey := newPrivateKey(t).PublicKey()
 	peer := &v1alpha1.WireguardPeer{
 		ObjectMeta: metav1.ObjectMeta{Name: "app-1"},
-		Status:     v1alpha1.WireguardPeerStatus{Address: "10.8.0.7"},
+		Status: v1alpha1.WireguardPeerStatus{
+			Address:         "10.8.0.7",
+			Endpoint:        "10.96.0.20:51820",
+			ServerPublicKey: serverKey.String(),
+			LocalCIDRs:      []string{"10.244.0.0/16", "10.96.0.0/12"},
+		},
 	}
-	wg := &v1alpha1.Wireguard{
-		ObjectMeta: metav1.ObjectMeta{Name: "vpn"},
-		Spec:       v1alpha1.WireguardSpec{LocalCIDRs: []string{"10.244.0.0/16", "10.96.0.0/12"}},
-		Status:     v1alpha1.WireguardStatus{Endpoint: "10.96.0.20:51820", PublicKey: serverKey.String()},
-	}
-	return peer, wg, serverKey
+	return peer, serverKey
 }
 
 func TestDesiredTunnel(t *testing.T) {
 	tests := []struct {
 		name        string
-		mutate      func(*v1alpha1.WireguardPeer, *v1alpha1.Wireguard)
+		mutate      func(*v1alpha1.WireguardPeer)
 		wantCIDRs   []string
 		wantWaiting bool
 		wantErr     string
@@ -52,58 +52,64 @@ func TestDesiredTunnel(t *testing.T) {
 		{name: "complete", wantCIDRs: []string{"10.244.0.0/16", "10.96.0.0/12"}},
 		{
 			name:        "no address",
-			mutate:      func(p *v1alpha1.WireguardPeer, _ *v1alpha1.Wireguard) { p.Status.Address = "" },
+			mutate:      func(p *v1alpha1.WireguardPeer) { p.Status.Address = "" },
 			wantWaiting: true,
 			wantErr:     "has no status.address",
 		},
 		{
 			name:        "no endpoint",
-			mutate:      func(_ *v1alpha1.WireguardPeer, w *v1alpha1.Wireguard) { w.Status.Endpoint = "" },
+			mutate:      func(p *v1alpha1.WireguardPeer) { p.Status.Endpoint = "" },
 			wantWaiting: true,
 			wantErr:     "has no status.endpoint",
 		},
 		{
-			name:        "no public key",
-			mutate:      func(_ *v1alpha1.WireguardPeer, w *v1alpha1.Wireguard) { w.Status.PublicKey = "" },
+			name:        "no server public key",
+			mutate:      func(p *v1alpha1.WireguardPeer) { p.Status.ServerPublicKey = "" },
 			wantWaiting: true,
-			wantErr:     "has no status.publicKey",
+			wantErr:     "has no status.serverPublicKey",
+		},
+		{
+			name:        "no localCIDRs",
+			mutate:      func(p *v1alpha1.WireguardPeer) { p.Status.LocalCIDRs = nil },
+			wantWaiting: true,
+			wantErr:     "has no status.localCIDRs",
 		},
 		{
 			name:    "IPv6 address",
-			mutate:  func(p *v1alpha1.WireguardPeer, _ *v1alpha1.Wireguard) { p.Status.Address = "fd00::7" },
+			mutate:  func(p *v1alpha1.WireguardPeer) { p.Status.Address = "fd00::7" },
 			wantErr: "is not IPv4",
 		},
 		{
 			name:    "endpoint without a port",
-			mutate:  func(_ *v1alpha1.WireguardPeer, w *v1alpha1.Wireguard) { w.Status.Endpoint = "10.96.0.20" },
+			mutate:  func(p *v1alpha1.WireguardPeer) { p.Status.Endpoint = "10.96.0.20" },
 			wantErr: "parse status.endpoint",
 		},
 		{
-			name:    "no localCIDRs",
-			mutate:  func(_ *v1alpha1.WireguardPeer, w *v1alpha1.Wireguard) { w.Spec.LocalCIDRs = nil },
-			wantErr: "has no spec.localCIDRs",
+			name:    "server key that does not parse",
+			mutate:  func(p *v1alpha1.WireguardPeer) { p.Status.ServerPublicKey = "nope" },
+			wantErr: "parse status.serverPublicKey",
 		},
 		{
 			name: "entry with host bits is masked",
-			mutate: func(_ *v1alpha1.WireguardPeer, w *v1alpha1.Wireguard) {
-				w.Spec.LocalCIDRs = []string{"10.244.0.5/16", "10.96.0.0/12"}
+			mutate: func(p *v1alpha1.WireguardPeer) {
+				p.Status.LocalCIDRs = []string{"10.244.0.5/16", "10.96.0.0/12"}
 			},
 			wantCIDRs: []string{"10.244.0.0/16", "10.96.0.0/12"},
 		},
 		{
 			name:    "entry covering every address",
-			mutate:  func(_ *v1alpha1.WireguardPeer, w *v1alpha1.Wireguard) { w.Spec.LocalCIDRs = []string{"0.0.0.0/0"} },
+			mutate:  func(p *v1alpha1.WireguardPeer) { p.Status.LocalCIDRs = []string{"0.0.0.0/0"} },
 			wantErr: "covers every address",
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			peer, wg, serverKey := tunnelFixture(t)
+			peer, serverKey := tunnelFixture(t)
 			if tc.mutate != nil {
-				tc.mutate(peer, wg)
+				tc.mutate(peer)
 			}
 
-			got, err := desiredTunnel(peer, wg)
+			got, err := desiredTunnel(peer)
 
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
@@ -134,8 +140,8 @@ func TestDesiredTunnel(t *testing.T) {
 
 func testTunnel(t *testing.T) Tunnel {
 	t.Helper()
-	peer, wg, _ := tunnelFixture(t)
-	tun, err := desiredTunnel(peer, wg)
+	peer, _ := tunnelFixture(t)
+	tun, err := desiredTunnel(peer)
 	if err != nil {
 		t.Fatalf("desiredTunnel: %v", err)
 	}
