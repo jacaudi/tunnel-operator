@@ -71,15 +71,16 @@ What each state means:
   server share an address whatever their namespace. Two servers with the same `peerCIDR` can hand
   out the same address. A `Wireguard` admits every namespace unless its
   `allowedNamespaces.from` says `Same`.
-- **The server finds its peers by `wireguardRef` and `wireguardNamespace`.** Peers created by this operator version carry no
-  ownerReference to their `Wireguard` and are not deleted with it. Peers created by an earlier
-  version keep theirs. Deleting the server leaves peers created by this version in place, reading
-  `pending` with `WireguardNotFound`.
+- **The server finds its peers by `wireguardRef` and `wireguardNamespace`.** Peers created by this
+  operator version carry no ownerReference to their `Wireguard` and are not deleted with it. Peers
+  created by an earlier version keep theirs. Deleting the server leaves peers created by this
+  version in place, reading `pending` with `WireguardNotFound`.
 - **Deleting a peer removes it from `wg0`.** The operator drops it from `state.json`, and the
   agent removes any device peer whose key is no longer listed.
 - **One address, one peer.** If two peers of one server end up with the same
   `status.address`, the peer with the oldest `creationTimestamp` keeps it. Ties go to the smaller
-  name, then the smaller namespace. The other peer reads `AddressConflict` and is allocated a new address.
+  name, then the smaller namespace. The other peer reads `AddressConflict` and is allocated a new
+  address.
 - **One public key, one peer.** The agent keys peers by public key, so a server admits one peer per
   `publicKey`. The peer the server is already serving under that key keeps it, whatever its age or
   name, so editing a peer's key to another peer's cannot displace it. Only when no peer holds the

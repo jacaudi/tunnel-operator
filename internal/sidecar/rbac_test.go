@@ -1,9 +1,10 @@
 package sidecar
 
 import (
-	"maps"
+	"errors"
+	"io"
 	"os"
-	"slices"
+	"reflect"
 	"testing"
 
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -19,33 +20,24 @@ func TestClientClusterRoleGrantsOnlyPeers(t *testing.T) {
 		t.Fatalf("open the client ClusterRole: %v", err)
 	}
 	defer f.Close()
+	dec := yaml.NewYAMLOrJSONDecoder(f, 4096)
 	var role rbacv1.ClusterRole
-	if err := yaml.NewYAMLOrJSONDecoder(f, 4096).Decode(&role); err != nil {
+	if err := dec.Decode(&role); err != nil {
 		t.Fatalf("decode the client ClusterRole: %v", err)
 	}
-
-	groups, resources, verbs := map[string]bool{}, map[string]bool{}, map[string]bool{}
-	for _, rule := range role.Rules {
-		for _, s := range []struct {
-			set  map[string]bool
-			from []string
-		}{{groups, rule.APIGroups}, {resources, rule.Resources}, {verbs, rule.Verbs}} {
-			for _, v := range s.from {
-				s.set[v] = true
-			}
-		}
+	if err := dec.Decode(&rbacv1.ClusterRole{}); !errors.Is(err, io.EOF) {
+		t.Errorf("the client ClusterRole file has a second document (err = %v), want one", err)
 	}
-	for _, c := range []struct {
-		what string
-		got  map[string]bool
-		want []string
-	}{
-		{"apiGroups", groups, []string{"vpn.wireguard-operator.io"}},
-		{"resources", resources, []string{"wireguardpeers"}},
-		{"verbs", verbs, []string{"create", "delete", "get", "list", "watch"}},
-	} {
-		if got := slices.Sorted(maps.Keys(c.got)); !slices.Equal(got, c.want) {
-			t.Errorf("client ClusterRole %s = %v, want exactly %v", c.what, got, c.want)
-		}
+
+	want := []rbacv1.PolicyRule{{
+		APIGroups: []string{"vpn.wireguard-operator.io"},
+		Resources: []string{"wireguardpeers"},
+		Verbs:     []string{"create", "delete", "get", "list", "watch"},
+	}}
+	if !reflect.DeepEqual(role.Rules, want) {
+		t.Errorf("client ClusterRole rules = %+v, want exactly %+v", role.Rules, want)
+	}
+	if role.AggregationRule != nil {
+		t.Errorf("client ClusterRole has an aggregationRule %+v, want none", role.AggregationRule)
 	}
 }
