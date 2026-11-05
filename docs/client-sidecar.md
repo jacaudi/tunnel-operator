@@ -12,26 +12,29 @@ Deployment.
 1. **Refuses a pod in the host network.** If `POD_IP` equals `HOST_IP`, the pod shares the node's
    network namespace, and replacing its default route would cut the node off. The sidecar exits
    with `refusing to start`. It also exits, naming each one, when any of `POD_NAME`,
-   `POD_NAMESPACE`, `POD_UID`, `POD_IP` or `HOST_IP` is unset, or when `--wireguard` is missing.
+   `POD_NAMESPACE`, `POD_UID`, `POD_IP` or `HOST_IP` is unset, or when `--wireguard` is missing or malformed.
 2. **Keeps one key in the pod.** It generates a private key into `/var/run/wireguard/key` on a
    memory-backed volume, with mode `0600`, and reuses it when the container restarts. The key never
    reaches etcd or disk. A key file that holds no valid WireGuard key stops the sidecar and is
    left as it is.
 3. **Registers the pod.** It creates a [`WireguardPeer`](crd-wireguardpeer.md) named after the pod,
-   in the pod's namespace, with `spec.wireguardRef` set to `--wireguard`, the public half of its key
-   as `spec.publicKey`, and the pod as its controller owner. Deleting the pod deletes the peer.
+   in the pod's namespace, with `spec.wireguardRef` set to the name in `--wireguard`, `spec.wireguardNamespace`
+   set to its namespace when `--wireguard` gives one, the public half of its key as
+   `spec.publicKey`, and the pod as its controller owner. Deleting the pod deletes the peer.
    If a peer already exists under the pod's name:
-   - **it is this pod's, with this pod's key and `wireguardRef`** — the sidecar keeps it;
-   - **a Pod controls it, but not this pod, or it carries another key or `wireguardRef`** — the
+   - **it is this pod's, with this pod's key, `wireguardRef` and `wireguardNamespace`** — the sidecar keeps it;
+   - **a Pod controls it, but not this pod, or it carries another key, `wireguardRef` or
+     `wireguardNamespace`** — the
      sidecar deletes it, guarded by the old peer's UID, and creates its own. This is what happens
      when a StatefulSet pod comes back under the same name;
    - **no Pod controls it** — the sidecar refuses to delete it and registers nothing. The peer was
      not made by a sidecar, so it is yours to remove.
-4. **Watches and re-applies.** It watches the pod's peer and the `Wireguard` named by
-   `--wireguard`, and runs a pass on every change to either and every 10 seconds. A pass registers
-   the peer, reads `status.address` from the peer and `status.endpoint`, `status.publicKey` and
-   `spec.localCIDRs` from the `Wireguard`, and applies them. While the operator has not published
-   them yet, the pass waits and the next one retries.
+4. **Watches and re-applies.** It watches only the pod's own peer, and runs a pass on every change to
+   it and every 10 seconds. A pass registers the peer, reads `status.address`, `status.endpoint`,
+   `status.serverPublicKey` and `status.localCIDRs` from it, and applies them. The operator copies
+   the last three from the `Wireguard`, so the sidecar never reads the `Wireguard` and the gateway
+   can be in another namespace. While the operator has not published them yet, the pass waits and
+   the next one retries.
 5. **Configures `wg0`.** It creates `wg0` (kernel module, or wireguard-go when the node has none)
    at MTU `1320`, with the peer's `status.address` as a `/32` and exactly one peer: the server's
    public key and endpoint, `AllowedIPs 0.0.0.0/0` and a keepalive of 25 seconds. It reconfigures
@@ -50,7 +53,7 @@ table like this:
 default dev wg0 proto 151 scope link                   # everything else
 ```
 
-- **Local traffic stays on `eth0`.** Each `localCIDRs` entry of the `Wireguard` gets a route via the
+- **Local traffic stays on `eth0`.** Each `localCIDRs` entry of the `Wireguard` (copied into the peer's `status.localCIDRs`) gets a route via the
   CNI gateway on `eth0`. Cluster DNS and in-cluster traffic never enter the tunnel, as long as
   `localCIDRs` covers them.
 - **Everything else is tunnelled.** The default route is `default dev wg0`. The gateway's own
@@ -82,13 +85,13 @@ and the RoleBinding. The init container needs these fields:
 |---|---|
 | First in `initContainers` | A native sidecar starts before, and stays up beside, every container after it. Init containers listed after it run inside the tunnel too. |
 | `restartPolicy: Always` | Makes the init container a native sidecar, so it keeps running with the application containers. |
-| `args: ["client", "--wireguard", "<name>"]` | Runs the agent in client mode and names the `Wireguard`, in the pod's namespace, to attach to. |
+| `args: ["client", "--wireguard", "<name>"]` | Runs the agent in client mode and names the `Wireguard` to attach to: `<name>` for one in the pod's namespace, or `<namespace>/<name>` for one elsewhere. |
 | `POD_NAME`, `POD_NAMESPACE`, `POD_UID` | Downward API (`metadata.name`, `metadata.namespace`, `metadata.uid`). They name the peer and make the pod its controller owner. |
 | `POD_IP`, `HOST_IP` | Downward API (`status.podIP`, `status.hostIP`). They tell a pod in the host network from one in its own. |
 | `securityContext.capabilities.add: [NET_ADMIN]` | Creates `wg0` and changes the pod's routes. |
 | A memory-backed `emptyDir` mounted at `/var/run/wireguard` | Holds the key in memory. It survives a container restart and is gone with the pod. |
 | `startupProbe` running `agent client --check` | Holds the application containers until the tunnel is up and the routes are in place. `periodSeconds: 2` and `failureThreshold: 90` give it 180 seconds; if the check has not passed by then, the kubelet restarts the sidecar. |
-| A `serviceAccountName` bound to `wireguard-operator-client` | Lets the sidecar create its peer and read the `Wireguard`. See [Prerequisites](#prerequisites). |
+| A `serviceAccountName` bound to `wireguard-operator-client` | Lets the sidecar create and read its own peer. See [Prerequisites](#prerequisites). |
 
 There is no liveness or readiness probe. The sidecar only configures: the kernel keeps the tunnel
 and the routes running without the process, so a hung sidecar leaks nothing. The kubelet restarts
@@ -98,7 +101,7 @@ it if it exits.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--wireguard` | — | **Required** unless `--check` is given. The name of the `Wireguard` in the pod's namespace to attach to. |
+| `--wireguard` | — | **Required** unless `--check` is given. The `Wireguard` to attach to: `<name>` in the pod's namespace, or `<namespace>/<name>`. |
 | `--check` | off | Run the [startup check](#the-startup-check) once and exit `0` if it passes, `1` with the reason on stderr if not. |
 | `-v` | `0` | Log verbosity. `1` also logs `tunnel applied` for every pass that completes. |
 
@@ -116,6 +119,28 @@ The key is always `/var/run/wireguard/key`; there is no flag for it.
 It prints what is missing and exits `1`, for example `wg0 has not completed a handshake with its
 peer` or `1.1.1.1 does not route via wg0`. While the probe fails, the application containers do not
 start.
+
+## Attaching to a gateway in another namespace
+
+Give `--wireguard` as `<namespace>/<name>` to attach to a `Wireguard` elsewhere, for example one
+central gateway `network/vpn` for pods in many namespaces:
+
+```yaml
+args: ["client", "--wireguard", "network/vpn"]
+```
+
+The sidecar's `WireguardPeer` stays in the pod's own namespace, with the pod as its owner, so
+deleting the pod still deletes the peer. It records the gateway in `spec.wireguardNamespace`. The
+operator admits the peer, allocates it an address that no peer in any namespace shares, and copies
+the gateway's endpoint, public key and `localCIDRs` into the peer's status.
+
+- **Consent is the gateway's.** A `Wireguard` admits every namespace unless its
+  `spec.allowedNamespaces.from` is `Same`; a peer from another namespace then reads
+  `NamespaceNotAllowed` and the sidecar keeps waiting. See [`Wireguard`](crd-wireguard.md#spec).
+- **RBAC stays in the pod's namespace.** Bind `wireguard-operator-client` there, as in
+  [Prerequisites](#prerequisites). The gateway's namespace needs no binding for these pods.
+- **`localCIDRs` come from the gateway.** A pod in another namespace keeps the gateway's
+  `localCIDRs` off the tunnel, so they must cover the cluster ranges the pod uses.
 
 ## Prerequisites
 
@@ -140,8 +165,8 @@ start.
       name: vpn-client
   ```
 
-  The role grants `create get list watch delete` on `wireguardpeers` and `get list watch` on
-  `wireguards`.
+  The role grants `create get list watch delete` on `wireguardpeers` and nothing else. The sidecar
+  never reads the `Wireguard`, so a pod needs no access to it, in any namespace.
 - **`localCIDRs` that cover the pod, Service and node CIDRs** on the `Wireguard`, plus
   `169.254.20.10/32` if you use NodeLocal DNSCache. See [`localCIDRs`](gluetun-egress.md#localcidrs).
   Anything outside them goes into the tunnel.
@@ -151,16 +176,17 @@ start.
 The sidecar logs to stderr. Start with `kubectl logs <pod> -c wg-client`.
 
 - **`waiting for the operator: …`** — not an error. The operator has not published something yet:
-  the peer's `status.address`, or the `Wireguard`'s `status.endpoint` or `status.publicKey`. The line
-  names which. The first line after registering reads `waiting for the operator: WireguardPeer
+  the peer's `status.address`, `status.endpoint`, `status.serverPublicKey` or `status.localCIDRs`.
+  The line names which. The first line after registering reads `waiting for the operator: WireguardPeer
   <namespace>/<name> registered`. The sidecar retries on the next change and every 10 seconds. If
-  the line stays, check `kubectl get wireguard,wireguardpeer`. `waiting for the operator: Wireguard
-  <namespace>/<name> not found` means `--wireguard` is mistyped or the server is not created yet.
+  the line stays, check `kubectl get wireguard,wireguardpeer -A`. A peer that reads
+  `WireguardNotFound` means `--wireguard` is mistyped or the server is not created yet; one that
+  reads `NamespaceNotAllowed` means the server admits only its own namespace.
 - **`client pass failed` with `… exists and no Pod controls it`** — a `WireguardPeer` with the
   pod's name exists and was not created by a sidecar, so the sidecar will not delete it. Delete
   the peer, or give the pod another name.
-- **`client pass failed` with another error** — the message names it: a `Wireguard` with no
-  `localCIDRs`, a value that does not parse, or a main table with no default route to read the CNI
+- **`client pass failed` with another error** — the message names it: a value in the peer's status that
+  does not parse, or a main table with no default route to read the CNI
   gateway from. The pass retries every 10 seconds.
 - **A missing RoleBinding.** The sidecar logs nothing of its own. Its log shows client-go
   `failed to list … forbidden` lines, the startup probe keeps failing, and the kubelet restarts the

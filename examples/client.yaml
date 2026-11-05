@@ -4,6 +4,8 @@
 #
 # - The namespace must allow NET_ADMIN: Pod Security level `privileged`.
 # - Replace the image tag vX.Y.Z with the operator release in use.
+# - To attach to a gateway in another namespace, give the sidecar `--wireguard network/vpn`
+#   (namespace/name). Keep this ServiceAccount and RoleBinding in the pod's own namespace.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
