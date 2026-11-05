@@ -392,7 +392,7 @@ func TestDedupeAddresses(t *testing.T) {
 	t0, t1, t2 := metav1.NewTime(base), metav1.NewTime(base.Add(time.Second)), metav1.NewTime(base.Add(2*time.Second))
 	peer := func(name, address string, created metav1.Time) v1alpha1.WireguardPeer {
 		return v1alpha1.WireguardPeer{
-			ObjectMeta: metav1.ObjectMeta{Name: name, CreationTimestamp: created},
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ns", CreationTimestamp: created},
 			Status:     v1alpha1.WireguardPeerStatus{Address: address},
 		}
 	}
@@ -413,19 +413,19 @@ func TestDedupeAddresses(t *testing.T) {
 			name:       "older wins",
 			peers:      []v1alpha1.WireguardPeer{peer("young", "10.8.0.2", t1), peer("old", "10.8.0.2", t0)},
 			wantKeep:   []string{"old"},
-			wantLosers: []loser{{"young", "old"}},
+			wantLosers: []loser{{"young", "ns/old"}},
 		},
 		{
 			name:       "tie goes to smaller name",
 			peers:      []v1alpha1.WireguardPeer{peer("b", "10.8.0.2", t0), peer("a", "10.8.0.2", t0)},
 			wantKeep:   []string{"a"},
-			wantLosers: []loser{{"b", "a"}},
+			wantLosers: []loser{{"b", "ns/a"}},
 		},
 		{
 			name:       "three holders",
 			peers:      []v1alpha1.WireguardPeer{peer("c", "10.8.0.2", t2), peer("a", "10.8.0.2", t0), peer("b", "10.8.0.2", t1)},
 			wantKeep:   []string{"a"},
-			wantLosers: []loser{{"c", "a"}, {"b", "a"}},
+			wantLosers: []loser{{"c", "ns/a"}, {"b", "ns/a"}},
 		},
 		{
 			name:     "unaddressed kept",
