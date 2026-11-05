@@ -13,6 +13,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -44,9 +45,12 @@ func newCountingClient(c client.Client) *countingClient {
 }
 
 func (c *countingClient) record(obj client.Object, migration bool) {
+	c.recordKey(obj.GetNamespace()+"/"+obj.GetName(), migration)
+}
+
+func (c *countingClient) recordKey(key string, migration bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	key := obj.GetNamespace() + "/" + obj.GetName()
 	c.writes[key]++
 	if migration {
 		c.migrations[key]++
@@ -96,6 +100,21 @@ func (c *countingClient) Patch(ctx context.Context, obj client.Object, p client.
 func (c *countingClient) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
 	c.record(obj, false)
 	return c.Client.Create(ctx, obj, opts...)
+}
+
+// Apply counts a Server-Side Apply request. If the configuration cannot name its object the write is
+// recorded under "?/?" rather than dropped, so a broken count fails the "svcWrites > 0" sanity check
+// instead of passing silently.
+func (c *countingClient) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
+	key := "?/?"
+	if n, ok := obj.(interface {
+		GetName() string
+		GetNamespace() string
+	}); ok {
+		key = n.GetNamespace() + "/" + n.GetName()
+	}
+	c.recordKey(key, false)
+	return c.Client.Apply(ctx, obj, opts...)
 }
 
 var _ = Describe("no update churn", func() {
