@@ -99,6 +99,10 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
 
+	By("installing the static admission backstop")
+	installAdmissionBackstop()
+	waitForBackstop()
+
 	// The manager caches only labelled pods, as in cmd/manager: any reader of Pods through the cache sees
 	// nothing else, so a spec that reads an unlabelled pod through it fails here as it would in a cluster.
 	k8sManager, err := ctrl.NewManager(cfg, ctrl.Options{

@@ -1,0 +1,10 @@
+# The static fail-closed backstop for label-driven injection. Nothing here is written by the operator,
+# so a labelled pod is refused from install, before the operator first starts, and
+# `kubectl delete -f release.yaml` removes it.
+resources:
+- require_injection_policy.yaml
+- require_injection_binding.yaml
+
+# Teaches kustomize that the binding's policyName follows the policy's name prefix.
+configurations:
+- kustomizeconfig.yaml

@@ -1,0 +1,30 @@
+# A pod labelled wireguard-operator.io/enabled=true must carry the injected wg-client sidecar, or it
+# is refused: it must never run outside the tunnel. This runs after mutation, so it sees the pod the
+# operator's MutatingAdmissionPolicy produced. It is GA since Kubernetes 1.30, so it holds even where
+# MutatingAdmissionPolicy is not served. Which pods it applies to is in the binding.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: operator-require-injection
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE"]
+      resources: ["pods"]
+  validations:
+  - expression: "!has(object.spec.hostNetwork) || !object.spec.hostNetwork"
+    message: "hostNetwork pods cannot be tunnelled"
+  - expression: >-
+      has(object.spec.initContainers) && size(object.spec.initContainers) > 0 &&
+      object.spec.initContainers[0].name == 'wg-client' &&
+      has(object.spec.initContainers[0].restartPolicy) &&
+      object.spec.initContainers[0].restartPolicy == 'Always'
+    message: >-
+      the pod is labelled wireguard-operator.io/enabled=true but was not injected with the WireGuard
+      sidecar. Check that exactly one Wireguard in the operator's namespace is annotated
+      wireguard-operator.io/default=true, that the operator is running, and that the cluster serves
+      MutatingAdmissionPolicy (Kubernetes 1.34 and 1.35 need the beta enabled). The operator's log
+      names the cause.
