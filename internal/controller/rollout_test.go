@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -48,9 +47,8 @@ func (f *fakeRollout) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Res
 	}
 	dep.Status = want
 	if err := f.Status().Update(ctx, dep); err != nil {
-		if apierrors.IsConflict(err) {
-			return ctrl.Result{Requeue: true}, nil
-		}
+		// A conflict (the Deployment moved under us) falls through as the error: controller-runtime
+		// requeues it with backoff, which is the retry this fake needs.
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	return ctrl.Result{}, nil
