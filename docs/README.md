@@ -13,6 +13,7 @@ New here? Start with the [Quick start in the root README](../README.md#quick-sta
 | [`WireguardPeer` reference](crd-wireguardpeer.md) | Peer CRD: spec, status, conditions, lifecycle |
 | [Gluetun egress](gluetun-egress.md) | Server egress through a gluetun container: configuration, `localCIDRs`, fail-closed routing, readiness |
 | [Client sidecar](client-sidecar.md) | The in-pod WireGuard client: what it does, the pod spec, routing, the startup check, troubleshooting |
+| [Sidecar injection](injection.md) | Label a pod and the operator injects the sidecar: the default gateway, the admission policies, rejections, uninstall cleanup |
 | [Upgrading from upstream](upgrading-from-upstream.md) | What this fork removed from jodevsa/wireguard-operator and what to do instead |
 | [Examples](../examples/) | Runnable sample manifests |
 
@@ -34,6 +35,11 @@ New here? Start with the [Quick start in the root README](../README.md#quick-sta
 - **Cross-namespace attachment** — a peer names a `Wireguard` in another namespace with
   `wireguardNamespace`, and the gateway admits or refuses that namespace through
   `allowedNamespaces`. See [client-sidecar.md](client-sidecar.md#attaching-to-a-gateway-in-another-namespace).
+- **Sidecar injection** — pods labelled `wireguard-operator.io/enabled: "true"` get the client sidecar
+  from an operator-written `MutatingAdmissionPolicy`, aimed at the default gateway in the operator's
+  namespace; a static `ValidatingAdmissionPolicy` rejects any labelled pod that was not injected, and
+  the operator keeps the client `RoleBinding` in namespaces that have labelled pods. See
+  [injection.md](injection.md).
 
 ## Not yet implemented (designed)
 

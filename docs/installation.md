@@ -5,10 +5,9 @@
 - **A Kubernetes cluster, 1.34 or later,** and `kubectl` pointed at it. On 1.34 and 1.35 the API
   server must run with `--feature-gates=MutatingAdmissionPolicy=true` and
   `--runtime-config=admissionregistration.k8s.io/v1beta1=true`; 1.36 and later need neither,
-  because MutatingAdmissionPolicy is GA and on by default there. This release does not yet create
-  any admission policy; the requirement is set now so that the release that injects sidecars does
-  not raise the minimum again. The envtest suite runs against Kubernetes 1.34.1 and the kind
-  e2e on a 1.34.11 node, both with that beta enabled.
+  because MutatingAdmissionPolicy is GA and on by default there. The operator uses it to inject the
+  client sidecar into labelled pods (see [injection.md](injection.md)). The envtest suite runs
+  against Kubernetes 1.34.1 and the kind e2e on a 1.34.11 node, both with that beta enabled.
 - **Privileged pods allowed in the gateway's namespace.** The server pod has a privileged `sysctl`
   init container, an `agent` container with `NET_ADMIN`, and a `gluetun` container with `NET_ADMIN`
   and a writable root filesystem; Pod Security `baseline` forbids the privileged container and the
@@ -116,3 +115,15 @@ make undeploy
 `make undeploy` deletes everything `config/default` renders, **including the CRDs**, so any
 `Wireguard` or `WireguardPeer` still in the cluster is deleted too. To remove only the CRDs from a
 workstation install, run `make uninstall`.
+
+The operator also writes objects at runtime that `make undeploy` and `kubectl delete -f release.yaml`
+do not remove, because a cluster-scoped policy cannot be owned by the namespaced operator: the
+sidecar-injection `MutatingAdmissionPolicy` and its binding, and a `RoleBinding` in each namespace
+that had labelled pods. Remove them with:
+
+```sh
+kubectl delete mutatingadmissionpolicy,mutatingadmissionpolicybinding,rolebinding -A \
+  -l app.kubernetes.io/managed-by=wireguard-operator
+```
+
+See [injection.md](injection.md#uninstall).

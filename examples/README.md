@@ -1,7 +1,7 @@
 # Example custom resources
 
-Three files: a server with its provider Secret, a peer of that server, and a client Deployment that
-attaches an application pod to it. Pair them with the reference docs:
+Four files: a server with its provider Secret, a peer of that server, and two client Deployments that
+attach an application pod to it, one with the sidecar written out and one that the operator injects. Pair them with the reference docs:
 [`Wireguard`](../docs/crd-wireguard.md) and [`WireguardPeer`](../docs/crd-wireguardpeer.md).
 
 ## Files
@@ -11,6 +11,7 @@ attaches an application pod to it. Pair them with the reference docs:
 | [`01-server.yaml`](01-server.yaml) | `Wireguard` named `vpn` with the required `localCIDRs` (pod, Service and node placeholders) and `gluetun.envFrom` a Secret, plus that `vpn-provider` Secret with placeholder gluetun variables for a WireGuard provider; the defaults apply otherwise (`peerCIDR` `10.8.0.0/24`, ClusterIP Service on UDP `51820`) |
 | [`02-peer.yaml`](02-peer.yaml) | `WireguardPeer` that references `vpn` and registers a client's public key; the operator fills in `status.address` |
 | [`client.yaml`](client.yaml) | A `Deployment` whose pod runs the client sidecar, with its `ServiceAccount` and the `RoleBinding` to `wireguard-operator-client`; the sidecar registers its own peer, so no `WireguardPeer` is applied for it |
+| [`injected-client.yaml`](injected-client.yaml) | A `Deployment` with no sidecar block, only the `wireguard-operator.io/enabled: "true"` label on its pod template; the operator injects the sidecar and attaches it to the default gateway (see [../docs/injection.md](../docs/injection.md)) |
 
 ## Reading order
 
@@ -38,6 +39,10 @@ peer20                ready    3m
 Deleting the Deployment deletes the pod and, with it, its peer. The namespace must allow
 `NET_ADMIN` (Pod Security `privileged`); see
 [../docs/client-sidecar.md](../docs/client-sidecar.md#prerequisites).
+
+`injected-client.yaml` is the alternative to `client.yaml`: apply one or the other. It needs the
+`Wireguard` to be the default gateway, annotated `wireguard-operator.io/default=true` and in the
+operator's namespace.
 
 > **Keys:** `02-peer.yaml` carries a sample public key. Replace it with the output of
 > `wg genkey | wg pubkey` from the client that will connect; the operator never holds the private

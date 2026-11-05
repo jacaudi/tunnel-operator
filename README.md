@@ -37,6 +37,10 @@ through a ClusterIP Service.
 - **Client sidecar** — a native sidecar that mints a key inside the application pod, registers it,
   and routes the pod's internet traffic through the server. See
   [docs/client-sidecar.md](docs/client-sidecar.md).
+- **Sidecar injection** — label a pod template `wireguard-operator.io/enabled: "true"` and the
+  operator injects the client sidecar and attaches the pod to the cluster's default gateway; a
+  labelled pod that cannot be tunnelled is rejected, never run in the clear. See
+  [docs/injection.md](docs/injection.md).
 
 See [`docs/architecture.md`](docs/architecture.md) for how the two resources fit together.
 

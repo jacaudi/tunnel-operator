@@ -1,0 +1,27 @@
+# A client Deployment with no sidecar block. The label is all it takes: the operator injects the
+# WireGuard sidecar and attaches the pod to the default gateway (the Wireguard in the operator's
+# namespace annotated wireguard-operator.io/default=true), and its internet traffic leaves through it.
+#
+# - The namespace must allow NET_ADMIN: Pod Security level `privileged`.
+# - Compare examples/client.yaml, which writes the same sidecar by hand.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  labels:
+    app: app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: app
+  template:
+    metadata:
+      labels:
+        app: app
+        wireguard-operator.io/enabled: "true"  # the opt-in
+    spec:
+      containers:
+        - name: app
+          image: curlimages/curl:8.17.0  # replace with your application; it starts once the tunnel is up
+          command: ["sleep", "infinity"]
