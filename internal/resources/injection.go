@@ -35,3 +35,8 @@ const (
 	// VolumeToken is the projected token volume mounted only into the sidecar.
 	VolumeToken = "wg-token"
 )
+
+// ClientRoleName names both the client ClusterRole as rendered in release.yaml (the config/ name
+// operator-client plus the release's wireguard- prefix) and the RoleBinding the operator creates to it in
+// each namespace with injected pods. It is literal because the operator writes the RoleBinding at runtime.
+const ClientRoleName = "wireguard-operator-client"

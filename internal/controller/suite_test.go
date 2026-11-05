@@ -134,6 +134,9 @@ var _ = BeforeSuite(func() {
 	}).SetupWithManager(k8sManager)
 	Expect(err).ToNot(HaveOccurred())
 
+	err = (&ClientRoleBindingReconciler{Client: k8sManager.GetClient()}).SetupWithManager(k8sManager)
+	Expect(err).ToNot(HaveOccurred())
+
 	// envtest runs no kube-controller-manager; fakeRollout reports the operator's Deployments rolled out.
 	err = ctrl.NewControllerManagedBy(k8sManager).
 		Named("fake-rollout").
