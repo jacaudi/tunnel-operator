@@ -24,9 +24,8 @@ WireguardPeer ──wireguardRef──▶ Wireguard ──owns──▶ Secret <
 
 There is one controller. It reconciles each `Wireguard` and also watches `WireguardPeer` objects,
 mapping each peer to the server its `wireguardRef` and `wireguardNamespace` name, not to an owner.
-A peer change therefore
-reconciles the server it points at, and a peer that changes `wireguardRef` reconciles both the old
-and the new server.
+A peer change therefore reconciles the server it points at, and a peer that changes `wireguardRef`
+reconciles both the old and the new server.
 
 The split follows WireGuard itself: an interface has one key pair and many peers, and a peer is
 nothing more than a public key and the addresses routed to it.
@@ -69,8 +68,8 @@ in [gluetun-egress.md](gluetun-egress.md).
   credentials never reach a second Secret), and, for each peer the server
   admits (a valid key and an address), the peer's name, namespace, `publicKey`, `wireguardRef` and
   `status.address`, sorted by name and then namespace — into the Secret's `state.json`, which
-  the pod mounts. A peer with no key, an invalid key, a key an older peer holds, a namespace the server does not allow,
-  an address conflict or no free address is left out. Other peer
+  the pod mounts. A peer with no key, an invalid key, a key another peer holds, a namespace
+  the server does not allow, an address conflict or no free address is left out. Other peer
   metadata (labels, annotations, resourceVersion, managedFields) and the rest of the status never
   reach the file, so writing them does not rewrite the Secret. The agent watches the file and
   diffs it against the live device, adding, updating and removing peers by public key.
