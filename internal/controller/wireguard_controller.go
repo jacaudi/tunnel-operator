@@ -162,8 +162,9 @@ func effectivePeerCIDR4(wg *v1alpha1.Wireguard) string {
 	return ipam.DefaultPeerCIDR4
 }
 
-// admittedKeys returns the public key each peer is listed under in wg's current state.json, keyed by
-// the peer's namespace/name: the keys the server is serving now. It is empty before the Secret exists or when its state is unreadable.
+// admittedKeys returns the public key each peer is listed under in wg's current state.json, keyed
+// by the peer's namespace/name: the keys the server is serving now. It is empty before the Secret
+// exists or when its state is unreadable, and it fails when the Secret cannot be read.
 func (r *WireguardReconciler) admittedKeys(ctx context.Context, wg *v1alpha1.Wireguard) (map[types.NamespacedName]string, error) {
 	secret := &corev1.Secret{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(wg), secret); err != nil {
@@ -187,6 +188,11 @@ func (r *WireguardReconciler) admittedKeys(ctx context.Context, wg *v1alpha1.Wir
 // allocates and readies the rest, and returns the peers admitted in this pass, as written: keyed
 // and holding a status.address.
 func (r *WireguardReconciler) reconcilePeers(ctx context.Context, req ctrl.Request, wg *v1alpha1.Wireguard) ([]v1alpha1.WireguardPeer, error) {
+	// Read first: a Secret that cannot be read stops the pass before any peer status is written.
+	current, err := r.admittedKeys(ctx, wg)
+	if err != nil {
+		return nil, err
+	}
 	peers, err := r.getWireguardPeers(ctx, req)
 	if err != nil {
 		return nil, err
@@ -195,12 +201,9 @@ func (r *WireguardReconciler) reconcilePeers(ctx context.Context, req ctrl.Reque
 	if err != nil {
 		return nil, err
 	}
-	// A peer whose key an older peer of this server holds is neither allocated nor returned, so
-	// the server never lists two peers under one key.
-	current, err := r.admittedKeys(ctx, wg)
-	if err != nil {
-		return nil, err
-	}
+	// A peer whose key another peer holds, the one the server's current state lists under that key
+	// or else the oldest, is neither allocated nor returned, so the server never lists two peers
+	// under one key.
 	admitted, keyLosers := dedupePublicKeys(admitted, current)
 	if err := r.releaseLosers(ctx, keyLosers, func(l conflictLoser) notReady { return publicKeyConflict(l.Winner) }); err != nil {
 		return nil, err

@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"slices"
 	"testing"
@@ -344,5 +345,36 @@ func TestAdmittedKeys(t *testing.T) {
 	got, err = (&WireguardReconciler{Client: newFakeClient(t, interceptor.Funcs{})}).admittedKeys(t.Context(), wg)
 	if err != nil || len(got) != 0 {
 		t.Errorf("admittedKeys() with no Secret = %v, %v, want none and no error", got, err)
+	}
+}
+
+func TestReconcilePeersStopsBeforeAnyWriteWhenTheSecretCannotBeRead(t *testing.T) {
+	boom := errors.New("secret unavailable")
+	wg := &v1alpha1.Wireguard{ObjectMeta: metav1.ObjectMeta{Name: "vpn", Namespace: "network"}}
+	keyless := peerIn("media", "keyless", "vpn", "network") // admitPeers would write its status
+	var writes []string
+	c := newFakeClient(t, interceptor.Funcs{
+		Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if _, ok := obj.(*corev1.Secret); ok {
+				return boom
+			}
+			return cl.Get(ctx, key, obj, opts...)
+		},
+		SubResourceUpdate: func(_ context.Context, _ client.Client, _ string, obj client.Object, _ ...client.SubResourceUpdateOption) error {
+			writes = append(writes, obj.GetName())
+			return nil
+		},
+	}, &keyless)
+	r := &WireguardReconciler{Client: c}
+
+	if _, err := r.admittedKeys(t.Context(), wg); !errors.Is(err, boom) {
+		t.Errorf("admittedKeys() error = %v, want %v", err, boom)
+	}
+	req := reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "network", Name: "vpn"}}
+	if _, err := r.reconcilePeers(t.Context(), req, wg); !errors.Is(err, boom) {
+		t.Errorf("reconcilePeers() error = %v, want %v", err, boom)
+	}
+	if len(writes) != 0 {
+		t.Errorf("reconcilePeers() wrote the status of %v, want no writes", writes)
 	}
 }
