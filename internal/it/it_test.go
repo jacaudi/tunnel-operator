@@ -253,8 +253,13 @@ var _ = Describe("wireguard controller", func() {
 			g.Expect(err).NotTo(HaveOccurred(), "curl %s from canary-client: %s", fetchURL, body)
 			g.Expect(body).To(Equal("node"))
 		}, Timeout, Interval).Should(Succeed())
-		canaryClientIP := get(Default, "pod/canary-client", "{.status.podIP}")
-		Expect(canaryClientIP).NotTo(BeEmpty())
+		// exec reaches the kubelet as soon as the container runs, but status.podIP arrives with the
+		// kubelet's next status sync, so a successful curl does not mean the IP is readable yet.
+		var canaryClientIP string
+		Eventually(func(g Gomega) {
+			canaryClientIP = get(g, "pod/canary-client", "{.status.podIP}")
+			g.Expect(canaryClientIP).NotTo(BeEmpty())
+		}, Timeout, Interval).Should(Succeed())
 		Eventually(func(g Gomega) {
 			logs, err := canaryLog()
 			g.Expect(err).NotTo(HaveOccurred(), "canary logs: %s", logs)
