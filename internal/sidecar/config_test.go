@@ -33,6 +33,19 @@ func TestConfigFromEnv(t *testing.T) {
 		prefix    bool
 	}{
 		{
+			name:      "gateway in another namespace",
+			wireguard: "network/vpn",
+			env:       full,
+			want: Config{
+				Wireguard:          "vpn",
+				WireguardNamespace: "network",
+				KeyPath:            DefaultKeyPath,
+				PodName:            "app-1",
+				PodNamespace:       "media",
+				PodUID:             "uid-1",
+			},
+		},
+		{
 			name:      "full environment",
 			wireguard: "vpn",
 			env:       full,
@@ -43,6 +56,24 @@ func TestConfigFromEnv(t *testing.T) {
 				PodNamespace: "media",
 				PodUID:       "uid-1",
 			},
+		},
+		{
+			name:      "namespace without a name",
+			wireguard: "network/",
+			env:       full,
+			wantErr:   `--wireguard "network/" must be a name or namespace/name`,
+		},
+		{
+			name:      "name without a namespace",
+			wireguard: "/vpn",
+			env:       full,
+			wantErr:   `--wireguard "/vpn" must be a name or namespace/name`,
+		},
+		{
+			name:      "too many parts",
+			wireguard: "a/b/c",
+			env:       full,
+			wantErr:   `--wireguard "a/b/c" must be a name or namespace/name`,
 		},
 		{
 			name:    "no wireguard",

@@ -885,14 +885,6 @@ rules:
   - get
   - list
   - watch
-- apiGroups:
-  - vpn.wireguard-operator.io
-  resources:
-  - wireguards
-  verbs:
-  - get
-  - list
-  - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
