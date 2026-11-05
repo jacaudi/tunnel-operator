@@ -162,7 +162,8 @@ func effectivePeerCIDR4(wg *v1alpha1.Wireguard) string {
 }
 
 // reconcilePeers lists the peers of wg, records a not-ready status on those the server cannot
-// admit, clears unusable addresses, releases the addresses of dedupe losers (AddressConflict),
+// admit, releases the peers that lose a public key (PublicKeyConflict), clears unusable addresses,
+// releases the addresses of dedupe losers (AddressConflict),
 // allocates and readies the rest, and returns the peers admitted in this pass, as written: keyed
 // and holding a status.address.
 func (r *WireguardReconciler) reconcilePeers(ctx context.Context, req ctrl.Request, wg *v1alpha1.Wireguard) ([]v1alpha1.WireguardPeer, error) {
@@ -172,6 +173,12 @@ func (r *WireguardReconciler) reconcilePeers(ctx context.Context, req ctrl.Reque
 	}
 	admitted, err := r.admitPeers(ctx, wg, peers.Items)
 	if err != nil {
+		return nil, err
+	}
+	// A peer whose key an older peer of this server holds is neither allocated nor returned, so
+	// the server never lists two peers under one key.
+	admitted, keyLosers := dedupePublicKeys(admitted)
+	if err := r.releaseLosers(ctx, keyLosers, func(l conflictLoser) notReady { return publicKeyConflict(l.Winner) }); err != nil {
 		return nil, err
 	}
 	cidr4 := effectivePeerCIDR4(wg)
@@ -185,7 +192,7 @@ func (r *WireguardReconciler) reconcilePeers(ctx context.Context, req ctrl.Reque
 	// Losers are neither allocated nor returned: their status write triggers the pass that
 	// re-allocates them, and the winners' addresses stay reserved because usedIps is computed from keep.
 	keep, losers := dedupeAddresses(admitted)
-	if err := r.releaseLosers(ctx, losers); err != nil {
+	if err := r.releaseLosers(ctx, losers, func(l conflictLoser) notReady { return addressConflict(l.Peer.Status.Address, l.Winner) }); err != nil {
 		return nil, err
 	}
 	return r.allocatePeers(ctx, cidr4, keep)
@@ -262,10 +269,10 @@ func (r *WireguardReconciler) allocatePeers(ctx context.Context, cidr4 string, p
 	return allocated, nil
 }
 
-// releaseLosers records addressConflict on each loser, which clears its status.address.
-func (r *WireguardReconciler) releaseLosers(ctx context.Context, losers []addressLoser) error {
+// releaseLosers records conflict(loser) on each loser, which clears its status.address.
+func (r *WireguardReconciler) releaseLosers(ctx context.Context, losers []conflictLoser, conflict func(conflictLoser) notReady) error {
 	for _, l := range losers {
-		if err := r.markPeerNotReady(ctx, &l.Peer, addressConflict(l.Peer.Status.Address, l.Winner)); err != nil && !skipPeerWrite(err) {
+		if err := r.markPeerNotReady(ctx, &l.Peer, conflict(l)); err != nil && !skipPeerWrite(err) {
 			return err
 		}
 	}

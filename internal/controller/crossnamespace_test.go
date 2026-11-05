@@ -58,21 +58,15 @@ var _ = Describe("cross-namespace attachment", func() {
 		return key, publicKey
 	}
 
-	// readyReason summarises the peer's Ready condition: "<reason>|<status.status>|<address>", or
-	// "ready" for an admitted peer, or says what it found instead.
+	// readyReason polls the peer's Ready condition as "<reason>|<status.status>|<address>", or "" while it has none.
 	readyReason := func(key types.NamespacedName) func() string {
 		return func() string {
 			got := &v1alpha1.WireguardPeer{}
-			if err := k8sClient.Get(context.Background(), key, got); err != nil {
-				return "get-failed"
-			}
+			_ = k8sClient.Get(context.Background(), key, got)
 			if c := meta.FindStatusCondition(got.Status.Conditions, ConditionReady); c != nil {
 				return c.Reason + "|" + got.Status.Status + "|" + got.Status.Address
 			}
-			if got.Status.Status == v1alpha1.Ready {
-				return "ready"
-			}
-			return "pending:" + got.Status.Status
+			return ""
 		}
 	}
 
@@ -80,17 +74,6 @@ var _ = Describe("cross-namespace attachment", func() {
 		for _, name := range []string{gatewayNS, appNS} {
 			err := k8sClient.Create(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}})
 			Expect(client.IgnoreAlreadyExists(err)).Should(Succeed())
-		}
-		// Other specs leave their Wireguards and peers behind, and every Wireguard lists every peer.
-		wgs := &v1alpha1.WireguardList{}
-		Expect(k8sClient.List(context.Background(), wgs)).Should(Succeed())
-		for i := range wgs.Items {
-			Expect(client.IgnoreNotFound(k8sClient.Delete(context.Background(), &wgs.Items[i]))).Should(Succeed())
-		}
-		peers := &v1alpha1.WireguardPeerList{}
-		Expect(k8sClient.List(context.Background(), peers)).Should(Succeed())
-		for i := range peers.Items {
-			Expect(client.IgnoreNotFound(k8sClient.Delete(context.Background(), &peers.Items[i]))).Should(Succeed())
 		}
 	})
 
@@ -142,6 +125,23 @@ var _ = Describe("cross-namespace attachment", func() {
 		}, timeout, interval).Should(Succeed())
 		Eventually(peerAddress(foreign), timeout, interval).Should(Equal("10.8.0.3"))
 		Eventually(serverState(gateway), timeout, interval).Should(ContainSubstring(foreignKey))
+	})
+
+	It("refuses a peer in another namespace that copies an existing peer's public key", func() {
+		gateway := readyGateway("vpn-key", nil)
+		original, originalKey := createPeer(gatewayNS, "original", gateway)
+		Eventually(peerAddress(original), timeout, interval).Should(Equal("10.8.0.2"))
+
+		// A peer created later, in another namespace, with a name that sorts after the original's.
+		copied := types.NamespacedName{Namespace: appNS, Name: "zzz-copy"}
+		Expect(k8sClient.Create(context.Background(), &v1alpha1.WireguardPeer{
+			ObjectMeta: metav1.ObjectMeta{Name: copied.Name, Namespace: copied.Namespace},
+			Spec:       v1alpha1.WireguardPeerSpec{WireguardRef: gateway.Name, WireguardNamespace: gateway.Namespace, PublicKey: originalKey},
+		})).Should(Succeed())
+
+		Eventually(readyReason(copied), timeout, interval).Should(Equal(ReasonPublicKeyConflict+"|"+v1alpha1.Pending+"|"), "the copy is refused and given no address")
+		Consistently(peerAddress(original), "2s", interval).Should(Equal("10.8.0.2"), "the original keeps its address")
+		Expect(strings.Count(serverState(gateway)(), originalKey)).Should(Equal(1), "the key reaches state.json once, for the original")
 	})
 
 	It("reports WireguardNotFound naming the resolved namespace when the gateway is missing there", func() {

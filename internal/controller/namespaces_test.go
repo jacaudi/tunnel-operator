@@ -246,3 +246,76 @@ func TestDesiredStateDropsAllowedNamespaces(t *testing.T) {
 		t.Error("desiredState() cleared its input's AllowedNamespaces")
 	}
 }
+
+func TestPublicKeyConflict(t *testing.T) {
+	want := notReady{
+		Status:           v1alpha1.Pending,
+		Message:          "Public key is held by peer media/app; waiting for it to be released",
+		Reason:           ReasonPublicKeyConflict,
+		ConditionMessage: "spec.publicKey is already held by the older peer media/app of this Wireguard, so this peer cannot be admitted",
+	}
+	if got := publicKeyConflict("media/app"); !reflect.DeepEqual(got, want) {
+		t.Errorf("publicKeyConflict() = %+v, want %+v", got, want)
+	}
+}
+
+func TestDedupePublicKeys(t *testing.T) {
+	base := time.Date(2026, time.November, 5, 12, 0, 0, 0, time.UTC)
+	older, newer := metav1.NewTime(base), metav1.NewTime(base.Add(time.Second))
+	peer := func(ns, name, key string, created metav1.Time) v1alpha1.WireguardPeer {
+		p := peerIn(ns, name, "vpn", "network")
+		p.Spec.PublicKey, p.CreationTimestamp = key, created
+		return p
+	}
+	type loser struct{ peer, winner string }
+	tests := []struct {
+		name       string
+		peers      []v1alpha1.WireguardPeer
+		wantKeep   []string
+		wantLosers []loser
+	}{
+		{
+			name:     "distinct keys are all kept",
+			peers:    []v1alpha1.WireguardPeer{peer("a", "p", "k1", older), peer("b", "p", "k2", newer)},
+			wantKeep: []string{"a/p", "b/p"},
+		},
+		{
+			name:       "the older peer in another namespace keeps the key",
+			peers:      []v1alpha1.WireguardPeer{peer("attacker", "zzz", "k1", newer), peer("victim", "app", "k1", older)},
+			wantKeep:   []string{"victim/app"},
+			wantLosers: []loser{{"attacker/zzz", "victim/app"}},
+		},
+		{
+			name:       "the older peer in one namespace keeps the key",
+			peers:      []v1alpha1.WireguardPeer{peer("a", "second", "k1", newer), peer("a", "first", "k1", older)},
+			wantKeep:   []string{"a/first"},
+			wantLosers: []loser{{"a/second", "a/first"}},
+		},
+		{
+			name:       "a tie goes to the smaller name, then namespace",
+			peers:      []v1alpha1.WireguardPeer{peer("b", "app", "k1", older), peer("a", "app", "k1", older)},
+			wantKeep:   []string{"a/app"},
+			wantLosers: []loser{{"b/app", "a/app"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			keep, losers := dedupePublicKeys(tt.peers)
+
+			var gotKeep []string
+			for _, p := range keep {
+				gotKeep = append(gotKeep, p.Namespace+"/"+p.Name)
+			}
+			if !reflect.DeepEqual(gotKeep, tt.wantKeep) {
+				t.Errorf("dedupePublicKeys() keep = %v, want %v", gotKeep, tt.wantKeep)
+			}
+			var gotLosers []loser
+			for _, l := range losers {
+				gotLosers = append(gotLosers, loser{l.Peer.Namespace + "/" + l.Peer.Name, l.Winner})
+			}
+			if !reflect.DeepEqual(gotLosers, tt.wantLosers) {
+				t.Errorf("dedupePublicKeys() losers = %v, want %v", gotLosers, tt.wantLosers)
+			}
+		})
+	}
+}

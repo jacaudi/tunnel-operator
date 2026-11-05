@@ -34,6 +34,8 @@ const (
 	ReasonInvalidPublicKey = "InvalidPublicKey"
 	// ReasonAddressConflict: another, older peer holds this peer's address.
 	ReasonAddressConflict = "AddressConflict"
+	// ReasonPublicKeyConflict: another, older peer of the same Wireguard holds this peer's public key.
+	ReasonPublicKeyConflict = "PublicKeyConflict"
 )
 
 // notReady is a peer state the server cannot admit: the summary fields and the Ready=False
@@ -204,7 +206,7 @@ func skipPeerWrite(err error) bool {
 	return errors.IsConflict(err) || errors.IsNotFound(err)
 }
 
-// addressConflict is the not-ready record for a loser of address to winner.
+// addressConflict is the not-ready record for a loser of address to winner, a namespace/name.
 func addressConflict(address, winner string) notReady {
 	msg := fmt.Sprintf("Address %s is held by peer %s; waiting for a new address", address, winner)
 	return notReady{
@@ -212,6 +214,16 @@ func addressConflict(address, winner string) notReady {
 		Message:          msg,
 		Reason:           ReasonAddressConflict,
 		ConditionMessage: msg,
+	}
+}
+
+// publicKeyConflict is the not-ready record for a loser of the public key to winner, a namespace/name.
+func publicKeyConflict(winner string) notReady {
+	return notReady{
+		Status:           v1alpha1.Pending,
+		Message:          fmt.Sprintf("Public key is held by peer %s; waiting for it to be released", winner),
+		Reason:           ReasonPublicKeyConflict,
+		ConditionMessage: fmt.Sprintf("spec.publicKey is already held by the older peer %s of this Wireguard, so this peer cannot be admitted", winner),
 	}
 }
 
@@ -231,36 +243,49 @@ func addressUsable(addr, cidr4 string) bool {
 	return p.Contains(a) && a != p.Addr() && a != p.Addr().Next()
 }
 
-// addressLoser is a peer that must give up its status.address to Winner, the name of the peer
-// that keeps it.
-type addressLoser struct {
+// conflictLoser is a peer that must give up a value (its status.address or its spec.publicKey) to
+// Winner, the namespace/name of the peer that keeps it.
+type conflictLoser struct {
 	Peer   v1alpha1.WireguardPeer
 	Winner string
 }
 
 // dedupeAddresses splits admissible peers into those that keep their state and those that must
-// give up a shared status.address. Among the holders of one address the peer with the oldest
-// creationTimestamp keeps it, ties going to the lexically smaller name, then namespace; every other holder is a
-// loser. Peers without an address are kept. keep preserves the input order.
-func dedupeAddresses(peers []v1alpha1.WireguardPeer) (keep []v1alpha1.WireguardPeer, losers []addressLoser) {
+// give up a shared status.address. See dedupeBy. Peers without an address are kept.
+func dedupeAddresses(peers []v1alpha1.WireguardPeer) (keep []v1alpha1.WireguardPeer, losers []conflictLoser) {
+	return dedupeBy(peers, func(p *v1alpha1.WireguardPeer) string { return p.Status.Address })
+}
+
+// dedupePublicKeys splits admitted peers into those that keep their state and those that must give
+// up a spec.publicKey another peer holds. See dedupeBy. The agent keys peers by public key, so a
+// second holder would take over the first one's AllowedIPs on the server.
+func dedupePublicKeys(peers []v1alpha1.WireguardPeer) (keep []v1alpha1.WireguardPeer, losers []conflictLoser) {
+	return dedupeBy(peers, func(p *v1alpha1.WireguardPeer) string { return p.Spec.PublicKey })
+}
+
+// dedupeBy splits peers into those that keep their state and those that lose a value they share.
+// Among the holders of one value the peer with the oldest creationTimestamp keeps it, ties going to
+// the lexically smaller name, then namespace; every other holder is a loser. Peers whose value is
+// empty are kept. keep preserves the input order.
+func dedupeBy(peers []v1alpha1.WireguardPeer, value func(*v1alpha1.WireguardPeer) string) (keep []v1alpha1.WireguardPeer, losers []conflictLoser) {
 	older := func(a, b *v1alpha1.WireguardPeer) bool {
 		return cmp.Or(a.CreationTimestamp.Compare(b.CreationTimestamp.Time), cmp.Compare(a.Name, b.Name), cmp.Compare(a.Namespace, b.Namespace)) < 0
 	}
 	holder := map[string]*v1alpha1.WireguardPeer{}
 	for i := range peers {
 		p := &peers[i]
-		if h, ok := holder[p.Status.Address]; p.Status.Address != "" && (!ok || older(p, h)) {
-			holder[p.Status.Address] = p
+		if h, ok := holder[value(p)]; value(p) != "" && (!ok || older(p, h)) {
+			holder[value(p)] = p
 		}
 	}
 	for i := range peers {
 		p := &peers[i]
-		h := holder[p.Status.Address]
+		h := holder[value(p)]
 		if h == nil || h == p {
 			keep = append(keep, *p)
 			continue
 		}
-		losers = append(losers, addressLoser{Peer: *p, Winner: h.Name})
+		losers = append(losers, conflictLoser{Peer: *p, Winner: client.ObjectKeyFromObject(h).String()})
 	}
 	return keep, losers
 }
