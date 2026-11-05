@@ -510,6 +510,50 @@ var _ = Describe("wireguard controller", func() {
 		Eventually(func(g Gomega) {
 			g.Expect(vpnAgent(g, "wg", "show", "wg0", "peers")).NotTo(ContainSubstring(clientKey))
 		}, GatewayTimeout, Interval).Should(Succeed())
+
+		By("scenario (h): a client in another namespace attaches to the gateway")
+		const otherNamespace = "other-app"
+		output, err = kubectl("", "create", "namespace", otherNamespace)
+		Expect(err).NotTo(HaveOccurred(), "create namespace %s: %s", otherNamespace, output)
+		defer func() { _, _ = kubectl("", "delete", "namespace", otherNamespace, "--wait=false") }()
+		// The shipped example, pointed at vpn in the test namespace, with its own ServiceAccount and RoleBinding.
+		output, err = KubectlApply(crossNamespaceClientManifests(agentImage, TestNamespace), otherNamespace)
+		Expect(err).NotTo(HaveOccurred(), "apply the client in %s: %s", otherNamespace, output)
+		waitForDeploymentTobeReady("app", otherNamespace, GatewayTimeout)
+
+		otherPod, err := kubectl("", "get", "pods", "-n", otherNamespace, "-l", "app=app", "-o", "jsonpath={.items[0].metadata.name}")
+		Expect(err).NotTo(HaveOccurred(), "client pod name in %s: %s", otherNamespace, otherPod)
+		Expect(otherPod).NotTo(BeEmpty())
+		otherPeer := func(g Gomega, jsonpath string) string {
+			out, err := KubectlGet("wireguardpeer/"+otherPod, otherNamespace, jsonpath)
+			g.Expect(err).NotTo(HaveOccurred(), "kubectl get wireguardpeer/%s %s: %s", otherPod, jsonpath, out)
+			return out
+		}
+		Expect(otherPeer(Default, "{.spec.wireguardNamespace}")).To(Equal(TestNamespace))
+		Expect(otherPeer(Default, "{.metadata.ownerReferences[0].kind}")).To(Equal("Pod"), "the peer stays owned by its pod, in the pod's namespace")
+		otherAddress := otherPeer(Default, "{.status.address}")
+		Expect(otherAddress).NotTo(BeEmpty())
+		Expect(otherPeer(Default, "{.status.endpoint}")).NotTo(BeEmpty())
+		Expect(otherPeer(Default, "{.status.serverPublicKey}")).To(Equal(get(Default, "wireguard/vpn", "{.status.publicKey}")))
+		Expect(otherPeer(Default, "{.status.localCIDRs[0]}")).NotTo(BeEmpty())
+		gatewayPeers := get(Default, "wireguardpeers", "{.items[*].status.address}")
+		Expect(strings.Fields(gatewayPeers)).NotTo(ContainElement(otherAddress), "the other namespace's peer shares an address with a peer in %s", TestNamespace)
+		otherKey := otherPeer(Default, "{.spec.publicKey}")
+		Eventually(func(g Gomega) {
+			g.Expect(vpnAgent(g, "wg", "show", "wg0", "peers")).To(ContainSubstring(otherKey))
+		}, GatewayTimeout, Interval).Should(Succeed())
+		Eventually(func(g Gomega) {
+			body, err := KubectlExec("deploy/app", "app", otherNamespace, "curl", "-sS", "--max-time", "2", fetchURL)
+			g.Expect(err).NotTo(HaveOccurred(), "curl %s from app in %s: %s", fetchURL, otherNamespace, body)
+			g.Expect(body).To(Equal("exit"))
+		}, GatewayTimeout, Interval).Should(Succeed())
+		expectNoLeak(Default)
+
+		// The client's ServiceAccount reads its own peers and nothing about the gateway.
+		serviceAccount := "system:serviceaccount:" + otherNamespace + ":vpn-client"
+		denied, err := kubectl("", "get", "wireguards", "-n", TestNamespace, "--as", serviceAccount)
+		Expect(err).To(HaveOccurred(), "the client's ServiceAccount read the Wireguard: %s", denied)
+		Expect(denied).To(ContainSubstring("forbidden"))
 	})
 
 	It("exposes controller manager metrics", func() {

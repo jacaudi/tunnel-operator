@@ -148,3 +148,14 @@ func expectNoLeak(g Gomega) {
 	line := leakCounterLine(save)
 	g.Expect(line).To(HavePrefix("[0:0] "), "leak counter: %q", line)
 }
+
+// crossNamespaceClientManifests returns examples/client.yaml with its image placeholder replaced by
+// image and its `--wireguard vpn` argument replaced by `--wireguard <gatewayNamespace>/vpn`, so the
+// client attaches to the gateway in another namespace. It fails the spec unless the argument occurs
+// exactly once.
+func crossNamespaceClientManifests(image, gatewayNamespace string) string {
+	const arg = `"--wireguard", "vpn"`
+	manifests := clientManifests(image)
+	Expect(strings.Count(manifests, arg)).To(Equal(1), "%s must carry %s exactly once", clientExample, arg)
+	return strings.ReplaceAll(manifests, arg, fmt.Sprintf(`"--wireguard", "%s/vpn"`, gatewayNamespace))
+}
