@@ -34,7 +34,7 @@ const (
 	ReasonInvalidPublicKey = "InvalidPublicKey"
 	// ReasonAddressConflict: another, older peer holds this peer's address.
 	ReasonAddressConflict = "AddressConflict"
-	// ReasonPublicKeyConflict: another, older peer of the same Wireguard holds this peer's public key.
+	// ReasonPublicKeyConflict: another peer of the same Wireguard holds this peer's public key.
 	ReasonPublicKeyConflict = "PublicKeyConflict"
 )
 
@@ -222,7 +222,7 @@ func publicKeyConflict(winner string) notReady {
 		Status:           v1alpha1.Pending,
 		Message:          fmt.Sprintf("Public key is held by peer %s; waiting for it to be released", winner),
 		Reason:           ReasonPublicKeyConflict,
-		ConditionMessage: fmt.Sprintf("spec.publicKey is already held by the older peer %s of this Wireguard, so this peer cannot be admitted", winner),
+		ConditionMessage: fmt.Sprintf("spec.publicKey is already held by peer %s of this Wireguard, so this peer cannot be admitted", winner),
 	}
 }
 
@@ -249,37 +249,68 @@ type conflictLoser struct {
 	Winner string
 }
 
+// older reports whether a ranks before b: the oldest creationTimestamp, then the lexically smaller
+// name, then the smaller namespace.
+func older(a, b *v1alpha1.WireguardPeer) bool {
+	return cmp.Or(a.CreationTimestamp.Compare(b.CreationTimestamp.Time), cmp.Compare(a.Name, b.Name), cmp.Compare(a.Namespace, b.Namespace)) < 0
+}
+
 // dedupeAddresses splits admissible peers into those that keep their state and those that must
-// give up a shared status.address. See dedupeBy. Peers without an address are kept.
+// give up a shared status.address. Among the holders of one address the older peer keeps it; every
+// other holder is a loser. Peers without an address are kept. keep preserves the input order.
+// status.address is written only by the operator, so ordering by age cannot be forged.
 func dedupeAddresses(peers []v1alpha1.WireguardPeer) (keep []v1alpha1.WireguardPeer, losers []conflictLoser) {
-	return dedupeBy(peers, func(p *v1alpha1.WireguardPeer) string { return p.Status.Address })
-}
-
-// dedupePublicKeys splits admitted peers into those that keep their state and those that must give
-// up a spec.publicKey another peer holds. See dedupeBy. The agent keys peers by public key, so a
-// second holder would take over the first one's AllowedIPs on the server.
-func dedupePublicKeys(peers []v1alpha1.WireguardPeer) (keep []v1alpha1.WireguardPeer, losers []conflictLoser) {
-	return dedupeBy(peers, func(p *v1alpha1.WireguardPeer) string { return p.Spec.PublicKey })
-}
-
-// dedupeBy splits peers into those that keep their state and those that lose a value they share.
-// Among the holders of one value the peer with the oldest creationTimestamp keeps it, ties going to
-// the lexically smaller name, then namespace; every other holder is a loser. Peers whose value is
-// empty are kept. keep preserves the input order.
-func dedupeBy(peers []v1alpha1.WireguardPeer, value func(*v1alpha1.WireguardPeer) string) (keep []v1alpha1.WireguardPeer, losers []conflictLoser) {
-	older := func(a, b *v1alpha1.WireguardPeer) bool {
-		return cmp.Or(a.CreationTimestamp.Compare(b.CreationTimestamp.Time), cmp.Compare(a.Name, b.Name), cmp.Compare(a.Namespace, b.Namespace)) < 0
-	}
 	holder := map[string]*v1alpha1.WireguardPeer{}
 	for i := range peers {
 		p := &peers[i]
-		if h, ok := holder[value(p)]; value(p) != "" && (!ok || older(p, h)) {
-			holder[value(p)] = p
+		if h, ok := holder[p.Status.Address]; p.Status.Address != "" && (!ok || older(p, h)) {
+			holder[p.Status.Address] = p
 		}
 	}
 	for i := range peers {
 		p := &peers[i]
-		h := holder[value(p)]
+		h := holder[p.Status.Address]
+		if h == nil || h == p {
+			keep = append(keep, *p)
+			continue
+		}
+		losers = append(losers, conflictLoser{Peer: *p, Winner: client.ObjectKeyFromObject(h).String()})
+	}
+	return keep, losers
+}
+
+// dedupePublicKeys splits admitted peers into those that keep their state and those that must give
+// up a spec.publicKey another peer holds, because the agent keys peers by public key and a second
+// holder would take over the first one's AllowedIPs on the server.
+//
+// spec.publicKey is user-written and mutable, so age cannot decide who holds a key: an old peer
+// could edit its key to a victim's and push the victim out. The peer the server's current state
+// lists under that key, current[namespace/name] == key, keeps it. The Secret is written only by
+// the operator, and a peer that has just edited its key is not listed under the new one; a peer's
+// own status, which still reads ready after the edit, would not tell the two apart. Only when no
+// contender is listed, or several are, does the older peer win. A refused peer waits, and is
+// promoted only when the holder goes away. Peers with no key are kept. keep preserves the input
+// order.
+func dedupePublicKeys(peers []v1alpha1.WireguardPeer, current map[types.NamespacedName]string) (keep []v1alpha1.WireguardPeer, losers []conflictLoser) {
+	listed := func(p *v1alpha1.WireguardPeer) bool {
+		return current[client.ObjectKeyFromObject(p)] == p.Spec.PublicKey
+	}
+	beats := func(a, b *v1alpha1.WireguardPeer) bool {
+		if la, lb := listed(a), listed(b); la != lb {
+			return la
+		}
+		return older(a, b)
+	}
+	holder := map[string]*v1alpha1.WireguardPeer{}
+	for i := range peers {
+		p := &peers[i]
+		if h, ok := holder[p.Spec.PublicKey]; p.Spec.PublicKey != "" && (!ok || beats(p, h)) {
+			holder[p.Spec.PublicKey] = p
+		}
+	}
+	for i := range peers {
+		p := &peers[i]
+		h := holder[p.Spec.PublicKey]
 		if h == nil || h == p {
 			keep = append(keep, *p)
 			continue
