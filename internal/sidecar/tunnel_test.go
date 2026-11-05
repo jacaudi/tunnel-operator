@@ -276,3 +276,24 @@ func TestCheckDevice(t *testing.T) {
 		})
 	}
 }
+
+func TestNotReadyWhy(t *testing.T) {
+	notReady := metav1.Condition{Type: "Ready", Status: metav1.ConditionFalse, Reason: "PublicKeyConflict", Message: "held by media/app"}
+	tests := []struct {
+		name       string
+		conditions []metav1.Condition
+		want       string
+	}{
+		{"no Ready condition, as for an admitted peer", nil, ""},
+		{"another condition type", []metav1.Condition{{Type: "Other", Status: metav1.ConditionFalse, Reason: "R"}}, ""},
+		{"a not-ready Ready condition", []metav1.Condition{notReady}, " (Ready=False PublicKeyConflict: held by media/app)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			peer := &v1alpha1.WireguardPeer{Status: v1alpha1.WireguardPeerStatus{Conditions: tt.conditions}}
+			if got := notReadyWhy(peer); got != tt.want {
+				t.Errorf("notReadyWhy() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
