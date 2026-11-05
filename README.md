@@ -52,9 +52,10 @@ Where it runs: the operator in `wireguard-system`, and one gateway pod per `Wire
 
 ## Quick start
 
-**Prerequisites:** a Kubernetes cluster, `kubectl` pointed at it, Go 1.26, and `wireguard-tools`
-for `wg` on your workstation. The gateway's namespace must allow privileged pods. (Full
-prerequisites, manager flags and building your own images:
+**Prerequisites:** a Kubernetes 1.34+ cluster (with the MutatingAdmissionPolicy beta enabled on
+1.34–1.35), `kubectl` pointed at it, Go 1.26, and `wireguard-tools` for `wg` on your
+workstation. The gateway's namespace must allow privileged pods. (Full prerequisites, manager
+flags and building your own images:
 [`docs/installation.md`](docs/installation.md).)
 
 **1. Install the operator.** Helm: not yet available. Install from source (below). Tracked in

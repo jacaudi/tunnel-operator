@@ -285,9 +285,7 @@ func (r *WireguardReconciler) markPeerNotReady(ctx context.Context, peer *v1alph
 	})
 	err := r.Status().Update(ctx, peer)
 	if errors.IsInvalid(err) {
-		// Without CRD validation ratcheting (Kubernetes before 1.30, or the gate off) a peer stored
-		// with a pre-pattern key fails whole-object validation on any status write; that must not
-		// stop the server's sync.
+		// A status write rejected by whole-object validation must not stop the server's sync.
 		ctrllog.FromContext(ctx).Error(err, "Cannot record the status of a peer", "peer", peer.Name)
 		return nil
 	}
