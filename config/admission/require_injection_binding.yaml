@@ -1,0 +1,22 @@
+# Applies operator-require-injection to labelled pods. The selectors are the same as the operator-written
+# MutatingAdmissionPolicy binding's: the pods one injects are exactly the pods the other checks.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: operator-require-injection
+spec:
+  policyName: operator-require-injection
+  validationActions: [Deny]
+  matchResources:
+    objectSelector:
+      matchLabels:
+        wireguard-operator.io/enabled: "true"
+      matchExpressions:
+      # The gateway and operator pods are never tunnelled, whatever else they are labelled.
+      - key: wireguard-operator.io/component
+        operator: DoesNotExist
+    namespaceSelector:
+      matchExpressions:
+      - key: kubernetes.io/metadata.name
+        operator: NotIn
+        values: [kube-system]

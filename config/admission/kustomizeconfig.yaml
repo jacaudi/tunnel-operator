@@ -1,0 +1,10 @@
+# namePrefix renames the policy, but kustomize does not know that a binding's spec.policyName points
+# at it. Without this the rendered binding names a policy that does not exist, and the apiserver
+# applies the policy's failurePolicy to every labelled pod instead of its validations.
+nameReference:
+- kind: ValidatingAdmissionPolicy
+  group: admissionregistration.k8s.io
+  fieldSpecs:
+  - kind: ValidatingAdmissionPolicyBinding
+    group: admissionregistration.k8s.io
+    path: spec/policyName

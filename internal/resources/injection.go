@@ -11,6 +11,10 @@ const (
 	// ComponentGateway is LabelComponent's value on a gateway pod.
 	ComponentGateway = "gateway"
 
+	// SidecarContainer names the injected client container, always the first init container. The static
+	// backstop recognises an injected pod by it.
+	SidecarContainer = "wg-client"
+
 	// ComponentOperator is LabelComponent's value on the manager's pod.
 	ComponentOperator = "operator"
 )

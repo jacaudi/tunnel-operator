@@ -1011,3 +1011,55 @@ spec:
         runAsNonRoot: true
       serviceAccountName: wireguard-controller-manager
       terminationGracePeriodSeconds: 10
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: wireguard-operator-require-injection
+  namespace: wireguard-system
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups:
+      - ""
+      apiVersions:
+      - v1
+      operations:
+      - CREATE
+      resources:
+      - pods
+  validations:
+  - expression: '!has(object.spec.hostNetwork) || !object.spec.hostNetwork'
+    message: hostNetwork pods cannot be tunnelled
+  - expression: has(object.spec.initContainers) && size(object.spec.initContainers)
+      > 0 && object.spec.initContainers[0].name == 'wg-client' && has(object.spec.initContainers[0].restartPolicy)
+      && object.spec.initContainers[0].restartPolicy == 'Always'
+    message: the pod is labelled wireguard-operator.io/enabled=true but was not injected
+      with the WireGuard sidecar. Check that exactly one Wireguard in the operator's
+      namespace is annotated wireguard-operator.io/default=true, that the operator
+      is running, and that the cluster serves MutatingAdmissionPolicy (Kubernetes
+      1.34 and 1.35 need the beta enabled). The operator's log names the cause.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: wireguard-operator-require-injection
+  namespace: wireguard-system
+spec:
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+      - key: kubernetes.io/metadata.name
+        operator: NotIn
+        values:
+        - kube-system
+    objectSelector:
+      matchExpressions:
+      - key: wireguard-operator.io/component
+        operator: DoesNotExist
+      matchLabels:
+        wireguard-operator.io/enabled: "true"
+  policyName: wireguard-operator-require-injection
+  validationActions:
+  - Deny
