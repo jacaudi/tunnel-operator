@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -52,6 +53,17 @@ func init() {
 	//+kubebuilder:scaffold:scheme
 }
 
+// operatorNamespace returns the namespace the operator runs in, which the Deployment supplies through the
+// downward API. It is the one namespace whose default-gateway annotation the operator honours, so a
+// missing value is a startup error rather than a guess.
+func operatorNamespace() (string, error) {
+	ns := os.Getenv("POD_NAMESPACE")
+	if ns == "" {
+		return "", errors.New("POD_NAMESPACE is required: the operator selects the default gateway from its own namespace")
+	}
+	return ns, nil
+}
+
 func main() {
 	var agentImagePullPolicy string
 	var metricsAddr string
@@ -74,6 +86,13 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	podNamespace, err := operatorNamespace()
+	if err != nil {
+		setupLog.Error(err, "unable to start manager")
+		os.Exit(1)
+	}
+	setupLog.Info("operator namespace", "namespace", podNamespace)
 
 	leaderElectionNamespace := leaderElectionNamespaceFlag
 	if leaderElectionNamespace == "" {
@@ -115,6 +134,7 @@ func main() {
 		Scheme:               mgr.GetScheme(),
 		AgentImage:           wgImage,
 		AgentImagePullPolicy: v1.PullPolicy(agentImagePullPolicy),
+		APIReader:            mgr.GetAPIReader(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Wireguard")
 		os.Exit(1)

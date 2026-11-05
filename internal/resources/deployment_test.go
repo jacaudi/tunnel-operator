@@ -139,3 +139,20 @@ func containerNames(cs []corev1.Container) []string {
 	}
 	return names
 }
+
+// The component label marks the gateway pod so the injection policies skip it (a gateway pod's own
+// traffic would loop through itself). It belongs on the pod template only: the selector is immutable,
+// so adding to it would make every existing Deployment unapplyable.
+func TestGatewayPodTemplateCarriesComponentLabelButSelectorDoesNot(t *testing.T) {
+	dep := buildDeployment(t, testWireguard())
+
+	if got := dep.Spec.Template.Labels[LabelComponent]; got != ComponentGateway {
+		t.Errorf("pod template label %s = %q, want %q", LabelComponent, got, ComponentGateway)
+	}
+	if _, ok := dep.Spec.Selector.MatchLabels[LabelComponent]; ok {
+		t.Errorf("selector = %v, want no %s", dep.Spec.Selector.MatchLabels, LabelComponent)
+	}
+	if _, ok := dep.Labels[LabelComponent]; ok {
+		t.Errorf("deployment labels = %v, want no %s (the policies match pods, not Deployments)", dep.Labels, LabelComponent)
+	}
+}

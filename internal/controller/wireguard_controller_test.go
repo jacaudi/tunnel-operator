@@ -1513,6 +1513,43 @@ var _ = Describe("wireguard controller", func() {
 			}, "3s", Interval).Should(BeEmpty(), "a pod in another namespace must not be nudged")
 		})
 
+		// The manager caches only pods labelled for injection, and a cached List sees nothing else. The
+		// gateway pod is not labelled, so its lookup must go to the API reader or the config reload
+		// stops without any error.
+		It("nudges the server pod in the Wireguard's namespace despite a label-filtered Pod cache", func() {
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "own-server",
+					Namespace: wgNamespace,
+					Labels:    map[string]string{"app": "wireguard", "instance": wgName},
+				},
+				Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "busybox"}}},
+			}
+			Expect(k8sClient.Create(context.Background(), pod)).Should(Succeed())
+			defer func() { _ = k8sClient.Delete(context.Background(), pod) }()
+
+			Expect(k8sClient.Create(context.Background(), &v1alpha1.Wireguard{
+				ObjectMeta: metav1.ObjectMeta{Name: wgKey.Name, Namespace: wgKey.Namespace},
+				Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
+			})).Should(Succeed())
+			Eventually(serverState(wgKey), Timeout, Interval).ShouldNot(BeEmpty())
+
+			publicKey := newPublicKey()
+			Expect(k8sClient.Create(context.Background(), &v1alpha1.WireguardPeer{
+				ObjectMeta: metav1.ObjectMeta{Name: wgName + "-reload-peer", Namespace: wgNamespace},
+				Spec:       v1alpha1.WireguardPeerSpec{WireguardRef: wgName, PublicKey: publicKey},
+			})).Should(Succeed())
+			Eventually(serverState(wgKey), Timeout, Interval).Should(ContainSubstring(publicKey))
+
+			Eventually(func() string {
+				got := &corev1.Pod{}
+				if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(pod), got); err != nil {
+					return "get-failed"
+				}
+				return got.Annotations["wgConfigLastUpdated"]
+			}, Timeout, Interval).ShouldNot(BeEmpty(), "the server pod must be nudged to reload the changed Secret")
+		})
+
 		// expectDegradedWithoutDeployment waits for the Degraded condition want on the Wireguard key
 		// names, then asserts its Deployment is never rendered.
 		expectDegradedWithoutDeployment := func(key types.NamespacedName, want string) {
