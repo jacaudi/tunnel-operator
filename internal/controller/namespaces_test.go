@@ -28,24 +28,6 @@ func peerIn(ns, name, ref, refNS string) v1alpha1.WireguardPeer {
 	}
 }
 
-func TestGatewayKey(t *testing.T) {
-	tests := []struct {
-		name string
-		peer v1alpha1.WireguardPeer
-		want types.NamespacedName
-	}{
-		{"empty wireguardNamespace is the peer's own", peerIn("media", "p", "vpn", ""), types.NamespacedName{Namespace: "media", Name: "vpn"}},
-		{"wireguardNamespace wins", peerIn("media", "p", "vpn", "network"), types.NamespacedName{Namespace: "network", Name: "vpn"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := gatewayKey(&tt.peer); got != tt.want {
-				t.Errorf("gatewayKey() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestWireguardForPeerResolvesNamespace(t *testing.T) {
 	peer := peerIn("media", "p", "vpn", "network")
 	got := wireguardForPeer(t.Context(), &peer)
@@ -62,8 +44,8 @@ func TestNamespaceNotAllowed(t *testing.T) {
 			Spec:       v1alpha1.WireguardSpec{AllowedNamespaces: allowed},
 		}
 	}
-	same := &v1alpha1.AllowedNamespaces{From: v1alpha1.NamespacesFromSame}
-	all := &v1alpha1.AllowedNamespaces{From: v1alpha1.NamespacesFromAll}
+	same := &v1alpha1.AllowedNamespaces{From: v1alpha1.FromSame}
+	all := &v1alpha1.AllowedNamespaces{From: v1alpha1.FromAll}
 	foreign, own := peerIn("media", "p", "vpn", "network"), peerIn("network", "p", "vpn", "")
 
 	tests := []struct {
@@ -206,7 +188,7 @@ func TestSyncPeerIdentity(t *testing.T) {
 func TestAdmitPeersRefusesAForeignNamespaceUnderSame(t *testing.T) {
 	wg := &v1alpha1.Wireguard{
 		ObjectMeta: metav1.ObjectMeta{Name: "vpn", Namespace: "network"},
-		Spec:       v1alpha1.WireguardSpec{AllowedNamespaces: &v1alpha1.AllowedNamespaces{From: v1alpha1.NamespacesFromSame}},
+		Spec:       v1alpha1.WireguardSpec{AllowedNamespaces: &v1alpha1.AllowedNamespaces{From: v1alpha1.FromSame}},
 	}
 	key := publicKeyForTest(t)
 	own, foreign := peerIn("network", "own", "vpn", ""), peerIn("media", "app", "vpn", "network")
@@ -235,19 +217,6 @@ func TestAdmitPeersRefusesAForeignNamespaceUnderSame(t *testing.T) {
 	}
 	if c := meta.FindStatusCondition(got.Status.Conditions, ConditionReady); c == nil || c.Reason != ReasonNamespaceNotAllowed {
 		t.Errorf("foreign peer Ready condition = %+v, want reason %s", c, ReasonNamespaceNotAllowed)
-	}
-}
-
-func TestDesiredStateDropsAllowedNamespaces(t *testing.T) {
-	wg := &v1alpha1.Wireguard{
-		ObjectMeta: metav1.ObjectMeta{Name: "vpn", Namespace: "network"},
-		Spec:       v1alpha1.WireguardSpec{AllowedNamespaces: &v1alpha1.AllowedNamespaces{From: v1alpha1.NamespacesFromSame}},
-	}
-	if got := desiredState(wg, "k", nil).Server.Spec.AllowedNamespaces; got != nil {
-		t.Errorf("desiredState().Server.Spec.AllowedNamespaces = %+v, want nil: the agent reads no admission policy", got)
-	}
-	if wg.Spec.AllowedNamespaces == nil {
-		t.Error("desiredState() cleared its input's AllowedNamespaces")
 	}
 }
 

@@ -89,7 +89,7 @@ func gatewayKey(peer *v1alpha1.WireguardPeer) types.NamespacedName {
 // from, admit every namespace.
 func namespaceNotAllowed(wg *v1alpha1.Wireguard, peer *v1alpha1.WireguardPeer) (notReady, bool) {
 	allowed := wg.Spec.AllowedNamespaces
-	if allowed == nil || allowed.From != v1alpha1.NamespacesFromSame || peer.Namespace == wg.Namespace {
+	if allowed == nil || allowed.From != v1alpha1.FromSame || peer.Namespace == wg.Namespace {
 		return notReady{}, false
 	}
 	return notReady{
@@ -147,7 +147,6 @@ func addressPoolExhausted(cidr string) notReady {
 func desiredState(wg *v1alpha1.Wireguard, privateKey string, peers []v1alpha1.WireguardPeer) agent.State {
 	spec := *wg.Spec.DeepCopy()
 	spec.Gluetun = v1alpha1.GluetunSpec{}
-	spec.AllowedNamespaces = nil // admission policy is the operator's; the agent reads none of it
 	rendered := make([]v1alpha1.WireguardPeer, len(peers))
 	for i, peer := range peers {
 		rendered[i] = v1alpha1.WireguardPeer{

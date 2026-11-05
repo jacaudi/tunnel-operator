@@ -69,7 +69,7 @@ and are deleted with it.
 
 | Kind | Name | Contents |
 |---|---|---|
-| `Secret` | `<name>` | `privateKey` and `publicKey` (the server key pair), and `state.json` (the server's name, namespace and spec **without `spec.gluetun` and `spec.allowedNamespaces`**, plus its admitted peers, those with a valid key and an address, read by the agent). `spec.gluetun` is dropped so that provider credentials never reach a second Secret. |
+| `Secret` | `<name>` | `privateKey` and `publicKey` (the server key pair), and `state.json` (the server's name, namespace and spec **without `spec.gluetun`**, plus its admitted peers, those with a valid key and an address, read by the agent). `spec.gluetun` is dropped so that provider credentials never reach a second Secret. |
 | `Service` | `<name>-svc` | `ClusterIP`, one port `wireguard`, UDP `51820`. |
 | `Deployment` | `<name>-dep` | One replica, strategy `Recreate`: the old pod is gone before the new one starts, because one pod owns the key and the tunnel. Init container `sysctl` (privileged, sets `net.ipv4.ip_forward=1`). Container `agent` (`NET_ADMIN`, read-only root filesystem, UDP `51820`, readiness `GET /health` with a 5 s timeout, liveness TCP on `8080`). Container `gluetun` (the pinned image `ghcr.io/qdm12/gluetun:v3.41.3@sha256:…`, `NET_ADMIN`, writable root filesystem, no probes of its own, and a `postStart` hook that deletes a stale `ip rule` for table `51820` so an abruptly restarted gluetun can start). Seccomp `RuntimeDefault`; no service-account token. |
 
