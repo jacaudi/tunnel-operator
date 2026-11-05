@@ -8,6 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 # tools/setup-envtest is a SEPARATE Go module with its own tags (the first is v0.24.0), so its
 # version is independent of the sigs.k8s.io/controller-runtime version in go.mod. The apiserver
 # version it fetches is chosen at run time (ENVTEST_K8S_VERSION), not by this pin.
+# setup-envtest v0.25.2 has four copies: here, the Makefile's `$(ENVTEST)` recipe,
+# .github/workflows/ci-integration.yml and .taskfiles/go.yml (the install hint). Change all four
+# together.
 # renovate: datasource=go depName=sigs.k8s.io/controller-runtime/tools/setup-envtest
 ARG SETUP_ENVTEST_VERSION=v0.25.2
 RUN go install "sigs.k8s.io/controller-runtime/tools/setup-envtest@${SETUP_ENVTEST_VERSION}"

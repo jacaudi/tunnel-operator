@@ -6,8 +6,8 @@
   server must run with `--feature-gates=MutatingAdmissionPolicy=true` and
   `--runtime-config=admissionregistration.k8s.io/v1beta1=true`; 1.36 and later need neither,
   because MutatingAdmissionPolicy is GA and on by default there. This release does not yet create
-  any admission policy; the requirement is set now so that the upcoming sidecar-injection release
-  does not raise the minimum again. The envtest suite runs against Kubernetes 1.34.1 and the kind
+  any admission policy; the requirement is set now so that the release that injects sidecars does
+  not raise the minimum again. The envtest suite runs against Kubernetes 1.34.1 and the kind
   e2e on a 1.34.11 node, both with that beta enabled.
 - **Privileged pods allowed in the gateway's namespace.** The server pod has a privileged `sysctl`
   init container, an `agent` container with `NET_ADMIN`, and a `gluetun` container with `NET_ADMIN`

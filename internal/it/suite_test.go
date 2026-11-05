@@ -65,8 +65,10 @@ const (
 	// BeforeSuite fails unless the node reports it.
 	kindNodeVersion = "v1.34.11"
 
-	// kindNodeImage is the Kubernetes floor's kind node. kind requires the digest form, and without an
-	// Image kind v0.33.0 would silently boot its default node, Kubernetes 1.37.
+	// kindNodeImage is the Kubernetes floor's kind node. The @sha256 digest guarantees an image built for
+	// this kind release, and without an Image kind v0.33.0 would silently boot its default node,
+	// Kubernetes 1.37. The digest is tied to the kind release in go.mod (sigs.k8s.io/kind) and the
+	// Makefile's KIND_VERSION, and must move with them.
 	kindNodeImage = "kindest/node:" + kindNodeVersion + "@sha256:44e222ee2132dab25ff87301682f89eb82c7880ea3a1bf543bfe9708fd08d67d"
 )
 
