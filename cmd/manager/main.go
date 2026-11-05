@@ -32,6 +32,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/discovery"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -92,7 +93,6 @@ func main() {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
-	setupLog.Info("operator namespace", "namespace", podNamespace)
 
 	leaderElectionNamespace := leaderElectionNamespaceFlag
 	if leaderElectionNamespace == "" {
@@ -137,6 +137,21 @@ func main() {
 		APIReader:            mgr.GetAPIReader(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Wireguard")
+		os.Exit(1)
+	}
+
+	discoveryClient, err := discovery.NewDiscoveryClientForConfig(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "unable to create discovery client")
+		os.Exit(1)
+	}
+	if err = (&controllers.InjectionPolicyReconciler{
+		Client:            mgr.GetClient(),
+		Discovery:         discoveryClient,
+		Image:             wgImage,
+		OperatorNamespace: podNamespace,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "InjectionPolicy")
 		os.Exit(1)
 	}
 	//+kubebuilder:scaffold:builder

@@ -38,7 +38,12 @@ func labelledPod(ns string, mutate ...func(*corev1.Pod)) *corev1.Pod {
 			Namespace:    ns,
 			Labels:       map[string]string{resources.LabelEnabled: "true"},
 		},
-		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "busybox"}}},
+		Spec: corev1.PodSpec{
+			// A real apiserver's ServiceAccount admission plugin defaults this before validation, and a
+			// projected token is invalid without it. envtest runs that plugin disabled, so the pod says it.
+			ServiceAccountName: "default",
+			Containers:         []corev1.Container{{Name: "app", Image: "busybox"}},
+		},
 	}
 	for _, m := range mutate {
 		m(pod)
@@ -49,6 +54,9 @@ func labelledPod(ns string, mutate ...func(*corev1.Pod)) *corev1.Pod {
 // The static backstop must refuse a labelled pod that was not injected. These specs hold with no
 // default gateway, so nothing injects: every labelled pod below arrives as written.
 var _ = Describe("require-injection backstop", func() {
+	// A policy left by another spec would inject these pods instead of leaving them as written.
+	BeforeEach(waitForNoInjectPolicy)
+
 	var created []*corev1.Pod
 	create := func(pod *corev1.Pod) error {
 		err := k8sClient.Create(context.Background(), pod)
