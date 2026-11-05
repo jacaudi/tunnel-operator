@@ -9,7 +9,6 @@ import (
 
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	meta "k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/jacaudi/wireguard-operator/api/v1alpha1"
 	"github.com/jacaudi/wireguard-operator/internal/resources"
@@ -71,13 +70,14 @@ func desiredTunnel(peer *v1alpha1.WireguardPeer) (Tunnel, error) {
 
 // notReadyWhy returns " (Ready=False <reason>: <message>)" when the operator has recorded why it has not
 // admitted peer, such as NamespaceNotAllowed, WireguardNotFound or PublicKeyConflict, and "" otherwise.
+// The operator writes Ready only as False and removes it when it admits the peer.
 func notReadyWhy(peer *v1alpha1.WireguardPeer) string {
 	// "Ready" is the condition type the operator writes; internal/controller cannot be imported here.
 	c := meta.FindStatusCondition(peer.Status.Conditions, "Ready")
-	if c == nil || c.Status != metav1.ConditionFalse {
+	if c == nil {
 		return ""
 	}
-	return fmt.Sprintf(" (Ready=False %s: %s)", c.Reason, c.Message)
+	return fmt.Sprintf(" (Ready=%s %s: %s)", c.Status, c.Reason, c.Message)
 }
 
 // parseLocalCIDRs returns peer's status.localCIDRs, masked, in status order.
