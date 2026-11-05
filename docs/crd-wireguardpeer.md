@@ -45,7 +45,7 @@ What each state means:
 | `pending` | `Waiting for wireguard resource '<ref>' to be created` | No `Wireguard` named `wireguardRef` exists in `wireguardNamespace` (the peer's own namespace when empty). |
 | `error` | `Wireguard <namespace>/<name> does not accept peers from namespace <namespace>` | The `Wireguard` sets `spec.allowedNamespaces.from` to `Same` and the peer is in another namespace; see `NamespaceNotAllowed` below. |
 | `pending` | `Address <ip> is held by peer <namespace>/<name>; waiting for a new address` | Another peer of the same server holds this peer's address and wins the dedupe (oldest `creationTimestamp`, smaller name and then namespace on a tie); see `AddressConflict` below. |
-| `pending` | `Public key is held by peer <namespace>/<name>; waiting for it to be released` | An older peer of the same server holds this peer's `publicKey`; see `PublicKeyConflict` below. |
+| `pending` | `Public key is held by peer <namespace>/<name>; waiting for it to be released` | Another peer of the same server holds this peer's `publicKey`; see `PublicKeyConflict` below. |
 | `pending` | `No free address in <peerCIDR>` | The server's `peerCIDR` has no free address left. |
 | `ready` | `Peer configured` | The peer is admitted with an address. The server's agent picks it up from the next `state.json` write. |
 
@@ -60,7 +60,7 @@ What each state means:
 | `Ready=False` | `WireguardNotFound` | No `Wireguard` named `wireguardRef` exists in `wireguardNamespace`, or in the peer's namespace when that is empty. The message names the namespace it looked in. |
 | `Ready=False` | `NamespaceNotAllowed` | The `Wireguard` admits only its own namespace (`allowedNamespaces.from: Same`), and the peer is in another. The peer is not allocated an address or handed to the server. |
 | `Ready=False` | `AddressConflict` | Another peer holds this peer's address and is the one that wins the dedupe (oldest `creationTimestamp`, smaller name and then namespace on a tie). The peer gives its address up and is allocated a new one. |
-| `Ready=False` | `PublicKeyConflict` | Another, older peer of the same server holds this peer's `publicKey` (oldest `creationTimestamp` wins, ties to the smaller name and then namespace). This peer is not allocated an address, gets no copy of the gateway identity and is left out of the server's state, until the holder releases the key. |
+| `Ready=False` | `PublicKeyConflict` | Another peer of the same server holds this peer's `publicKey`, and the message names it as `namespace/name`. This peer is not allocated an address, gets no copy of the gateway identity and is left out of the server's state, and it waits until the holder goes away. |
 | `Ready=False` | `AddressPoolExhausted` | The server's `peerCIDR` has no free address for this peer. The server stays `ready` and keeps serving the peers that hold addresses. |
 
 ## Lifecycle notes
@@ -81,9 +81,12 @@ What each state means:
   `status.address`, the peer with the oldest `creationTimestamp` keeps it. Ties go to the smaller
   name, then the smaller namespace. The other peer reads `AddressConflict` and is allocated a new address.
 - **One public key, one peer.** The agent keys peers by public key, so a server admits one peer per
-  `publicKey`: the peer with the oldest `creationTimestamp` keeps it, with ties to the smaller name
-  and then namespace. Every other peer holding it reads `PublicKeyConflict`, whichever namespace it
-  is in, until the holder is deleted or changes its key.
+  `publicKey`. The peer the server is already serving under that key keeps it, whatever its age or
+  name, so editing a peer's key to another peer's cannot displace it. Only when no peer holds the
+  key yet does the oldest `creationTimestamp` win, with ties to the smaller name and then
+  namespace. Every other peer with that key reads `PublicKeyConflict`, whichever namespace it is in.
+  It waits, and is promoted only when the holder goes away: it is deleted, changes its key, moves to
+  another server, or is refused.
 - **A malformed `publicKey` is rejected at admission.** The API refuses a key that is not a
   canonical 32-byte base64 WireGuard key, so it cannot stall the server. A key stored before that
   check reports `InvalidPublicKey` and is left out of the server's state.
