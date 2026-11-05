@@ -60,6 +60,14 @@ const (
 	testClusterName     = "wg-kind-test"
 	testKindContextName = "kind-" + testClusterName
 	TestNamespace       = "default"
+
+	// kindNodeVersion is the Kubernetes version the suite runs on: the floor the operator supports. The
+	// BeforeSuite fails unless the node reports it.
+	kindNodeVersion = "v1.34.11"
+
+	// kindNodeImage is the Kubernetes floor's kind node. kind requires the digest form, and without an
+	// Image kind v0.33.0 would silently boot its default node, Kubernetes 1.37.
+	kindNodeImage = "kindest/node:" + kindNodeVersion + "@sha256:44e222ee2132dab25ff87301682f89eb82c7880ea3a1bf543bfe9708fd08d67d"
 )
 
 func waitForDeploymentTobeReady(name string, namespace string, timeout time.Duration) {
@@ -212,9 +220,13 @@ var _ = BeforeSuite(func() {
 	}
 
 	config := v1alpha4.Cluster{
+		// The operator's floor: MutatingAdmissionPolicy is beta in Kubernetes 1.34 and off by default.
+		FeatureGates:  map[string]bool{"MutatingAdmissionPolicy": true},
+		RuntimeConfig: map[string]string{"admissionregistration.k8s.io/v1beta1": "true"},
 		Nodes: []v1alpha4.Node{
 			{
-				Role: v1alpha4.ControlPlaneRole,
+				Role:  v1alpha4.ControlPlaneRole,
+				Image: kindNodeImage,
 				// The client sidecar sets an owner reference to its pod; with this plugin on, the suite proves
 				// the client ClusterRole needs no pods/finalizers access.
 				KubeadmConfigPatches: []string{"kind: ClusterConfiguration\napiServer:\n  extraArgs:\n    enable-admission-plugins: NodeRestriction,OwnerReferencesPermissionEnforcement\n"},
@@ -246,6 +258,21 @@ var _ = BeforeSuite(func() {
 
 	c, err := clientConfig.ClientConfig()
 	Expect(err).NotTo(HaveOccurred(), "build the kind client config")
+
+	// kind v0.33.0 defaults to a newer Kubernetes than the floor; prove the node is the floor and that
+	// the MutatingAdmissionPolicy beta is served before anything else runs.
+	kubeletVersion, err := kubectl("", "get", "nodes", "-o", "jsonpath={.items[0].status.nodeInfo.kubeletVersion}")
+	Expect(err).NotTo(HaveOccurred(), "kubectl get nodes: %s", kubeletVersion)
+	By("kubelet version " + kubeletVersion)
+	Expect(kubeletVersion).To(Equal(kindNodeVersion), "the kind node is not the Kubernetes floor")
+
+	admissionAPI, err := kubectl("", "get", "--raw", "/apis/admissionregistration.k8s.io/v1beta1")
+	Expect(err).NotTo(HaveOccurred(), "kubectl get --raw admissionregistration.k8s.io/v1beta1: %s", admissionAPI)
+	By("admissionregistration.k8s.io/v1beta1: " + admissionAPI)
+	Expect(admissionAPI).To(ContainSubstring(`"mutatingadmissionpolicies"`), "the MutatingAdmissionPolicy beta is not served")
+
+	// By lines and GinkgoWriter print only on failure; a plain Printf keeps a passing run's log self-evidencing.
+	fmt.Printf("e2e cluster: node kubelet %s; admissionregistration.k8s.io/v1beta1 serves mutatingadmissionpolicies\n", kubeletVersion)
 
 	// load locally built images
 	for _, image := range []string{managerImage, agentImage} {

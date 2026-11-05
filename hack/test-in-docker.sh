@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-K8S_VERSION="${1:-1.30.0}"
+K8S_VERSION="${1:-1.34.1}"
 
 # Ensure Go and Go bin are on PATH (golang base image)
 export PATH="/usr/local/go/bin:/go/bin:${PATH}"
