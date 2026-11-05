@@ -51,10 +51,18 @@ spec:
                   server.
                 pattern: ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]=$
                 type: string
+              wireguardNamespace:
+                description: |-
+                  WireguardNamespace is the namespace of the Wireguard instance. When empty, the Wireguard is in
+                  the peer's own namespace. The Wireguard's spec.allowedNamespaces decides whether the peer is
+                  admitted.
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
               wireguardRef:
-                description: The name of the Wireguard instance in k8s that the peer
-                  belongs to. The wg instance should be in the same namespace as the
-                  peer.
+                description: |-
+                  The name of the Wireguard instance in k8s that the peer belongs to. It is in the peer's own
+                  namespace unless wireguardNamespace says otherwise.
                 minLength: 1
                 type: string
             required:
@@ -131,10 +139,26 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              endpoint:
+                description: |-
+                  Endpoint is the address the peer dials: the gateway's Service ClusterIP and the WireGuard port,
+                  as host:port. The operator copies it from the Wireguard while the peer is admitted.
+                type: string
+              localCIDRs:
+                description: |-
+                  LocalCIDRs is the gateway's spec.localCIDRs: the cluster ranges the peer routes over the CNI,
+                  never through the tunnel.
+                items:
+                  type: string
+                type: array
               message:
                 description: A string field that provides additional information about
                   the status of the Wireguard peer. This could include error messages
                   or other information that helps to diagnose issues with the peer.
+                type: string
+              serverPublicKey:
+                description: ServerPublicKey is the gateway's WireGuard public key,
+                  copied from the Wireguard.
                 type: string
               status:
                 description: A string field that represents the current status of

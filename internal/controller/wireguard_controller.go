@@ -66,16 +66,17 @@ type WireguardReconciler struct {
 	ipAllocator       *ipam.Allocator
 }
 
+// getWireguardPeers returns the peers, in any namespace, whose gatewayKey is req.
 func (r *WireguardReconciler) getWireguardPeers(ctx context.Context, req ctrl.Request) (*v1alpha1.WireguardPeerList, error) {
 	peers := &v1alpha1.WireguardPeerList{}
-	if err := r.List(ctx, peers, client.InNamespace(req.Namespace)); err != nil {
+	if err := r.List(ctx, peers); err != nil {
 		return nil, err
 	}
 
 	relatedPeers := &v1alpha1.WireguardPeerList{}
 
 	for _, peer := range peers.Items {
-		if peer.Spec.WireguardRef == req.Name {
+		if gatewayKey(&peer) == req.NamespacedName {
 			relatedPeers.Items = append(relatedPeers.Items, peer)
 		}
 	}
@@ -169,7 +170,7 @@ func (r *WireguardReconciler) reconcilePeers(ctx context.Context, req ctrl.Reque
 	if err != nil {
 		return nil, err
 	}
-	admitted, err := r.admitPeers(ctx, peers.Items)
+	admitted, err := r.admitPeers(ctx, wg, peers.Items)
 	if err != nil {
 		return nil, err
 	}
@@ -190,12 +191,15 @@ func (r *WireguardReconciler) reconcilePeers(ctx context.Context, req ctrl.Reque
 	return r.allocatePeers(ctx, cidr4, keep)
 }
 
-// admitPeers records a not-ready status on every peer the server cannot admit and returns the
-// others, in input order.
-func (r *WireguardReconciler) admitPeers(ctx context.Context, peers []v1alpha1.WireguardPeer) ([]v1alpha1.WireguardPeer, error) {
+// admitPeers records a not-ready status on every peer wg cannot admit, because its namespace is not
+// allowed or its key is unusable, and returns the others, in input order.
+func (r *WireguardReconciler) admitPeers(ctx context.Context, wg *v1alpha1.Wireguard, peers []v1alpha1.WireguardPeer) ([]v1alpha1.WireguardPeer, error) {
 	var admitted []v1alpha1.WireguardPeer
 	for _, peer := range peers {
-		nr, problem := admissionProblem(&peer)
+		nr, problem := namespaceNotAllowed(wg, &peer)
+		if !problem {
+			nr, problem = admissionProblem(&peer)
+		}
 		if !problem {
 			admitted = append(admitted, peer)
 			continue
@@ -268,6 +272,25 @@ func (r *WireguardReconciler) releaseLosers(ctx context.Context, losers []addres
 	return nil
 }
 
+// syncPeerIdentity copies id and wg's spec.localCIDRs into the status of each peer, which a client
+// in another namespace reads instead of the Wireguard. A peer that already carries them is not
+// written; a skipped write is the peer's retry, as in admitPeers.
+func (r *WireguardReconciler) syncPeerIdentity(ctx context.Context, wg *v1alpha1.Wireguard, id serverIdentity, peers []v1alpha1.WireguardPeer) error {
+	for i := range peers {
+		peer := &peers[i]
+		if peer.Status.Endpoint == id.Endpoint && peer.Status.ServerPublicKey == id.PublicKey && slices.Equal(peer.Status.LocalCIDRs, wg.Spec.LocalCIDRs) {
+			continue
+		}
+		peer.Status.Endpoint = id.Endpoint
+		peer.Status.ServerPublicKey = id.PublicKey
+		peer.Status.LocalCIDRs = slices.Clone(wg.Spec.LocalCIDRs)
+		if err := r.Status().Update(ctx, peer); err != nil && !skipPeerWrite(err) {
+			return err
+		}
+	}
+	return nil
+}
+
 // markPeerNotReady records nr on peer with one status write, skipped when peerStatusMatches.
 func (r *WireguardReconciler) markPeerNotReady(ctx context.Context, peer *v1alpha1.WireguardPeer, nr notReady) error {
 	if peerStatusMatches(peer, nr) {
@@ -275,7 +298,11 @@ func (r *WireguardReconciler) markPeerNotReady(ctx context.Context, peer *v1alph
 	}
 	peer.Status.Status = nr.Status
 	peer.Status.Message = nr.Message
-	peer.Status.Address = "" // a not-ready peer (not admitted, or a dedupe loser) releases its address
+	// A not-ready peer (not admitted, or a dedupe loser) releases its address and the gateway identity.
+	peer.Status.Address = ""
+	peer.Status.Endpoint = ""
+	peer.Status.ServerPublicKey = ""
+	peer.Status.LocalCIDRs = nil
 	meta.SetStatusCondition(&peer.Status.Conditions, metav1.Condition{
 		Type:               ConditionReady,
 		Status:             metav1.ConditionFalse,
@@ -292,8 +319,7 @@ func (r *WireguardReconciler) markPeerNotReady(ctx context.Context, peer *v1alph
 	return err
 }
 
-// markPeersWireguardNotFound records WireguardNotFound on every peer in req.Namespace whose
-// wireguardRef is req.Name.
+// markPeersWireguardNotFound records WireguardNotFound on every peer whose gatewayKey is req.
 func (r *WireguardReconciler) markPeersWireguardNotFound(ctx context.Context, req ctrl.Request) error {
 	peers, err := r.getWireguardPeers(ctx, req)
 	if err != nil {
@@ -573,6 +599,10 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	identity := &serverIdentity{
 		Endpoint:  net.JoinHostPort(desiredSvc.Spec.ClusterIP, strconv.Itoa(resources.WireguardPort)),
 		PublicKey: string(secret.Data["publicKey"]),
+	}
+
+	if err := r.syncPeerIdentity(ctx, wireguard, *identity, admitted); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// desiredDep holds the apiserver's response to the apply, so it carries the Deployment's current

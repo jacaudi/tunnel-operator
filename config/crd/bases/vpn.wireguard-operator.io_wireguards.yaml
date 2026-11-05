@@ -111,6 +111,19 @@ spec:
                         type: object
                     type: object
                 type: object
+              allowedNamespaces:
+                description: AllowedNamespaces says which namespaces may attach peers
+                  to this Wireguard. Omitted means all.
+                properties:
+                  from:
+                    default: All
+                    description: From is All (peers from every namespace) or Same
+                      (only the Wireguard's own namespace).
+                    enum:
+                    - All
+                    - Same
+                    type: string
+                type: object
               gluetun:
                 description: Gluetun configures the gluetun container that carries
                   the server's egress to the VPN provider.

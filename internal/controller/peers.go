@@ -23,8 +23,11 @@ import (
 const (
 	// ReasonPublicKeyMissing: spec.publicKey is empty.
 	ReasonPublicKeyMissing = "PublicKeyMissing"
-	// ReasonWireguardNotFound: no Wireguard named spec.wireguardRef exists in the peer's namespace.
+	// ReasonWireguardNotFound: no Wireguard named spec.wireguardRef exists in the namespace
+	// gatewayKey resolves, the peer's own unless spec.wireguardNamespace says otherwise.
 	ReasonWireguardNotFound = "WireguardNotFound"
+	// ReasonNamespaceNotAllowed: the Wireguard's spec.allowedNamespaces excludes the peer's namespace.
+	ReasonNamespaceNotAllowed = "NamespaceNotAllowed"
 	// ReasonAddressPoolExhausted: the server's peerCIDR has no free address left.
 	ReasonAddressPoolExhausted = "AddressPoolExhausted"
 	// ReasonInvalidPublicKey: spec.publicKey is not a canonical WireGuard key.
@@ -73,6 +76,28 @@ func admissionProblem(peer *v1alpha1.WireguardPeer) (notReady, bool) {
 	return notReady{}, false
 }
 
+// gatewayKey is the Wireguard peer attaches to: spec.wireguardRef in spec.wireguardNamespace, which
+// is the peer's own namespace when empty.
+func gatewayKey(peer *v1alpha1.WireguardPeer) types.NamespacedName {
+	return types.NamespacedName{Namespace: cmp.Or(peer.Spec.WireguardNamespace, peer.Namespace), Name: peer.Spec.WireguardRef}
+}
+
+// namespaceNotAllowed returns the not-ready record for a peer whose namespace wg's
+// spec.allowedNamespaces excludes, and false when wg admits it. A nil policy, and an empty or All
+// from, admit every namespace.
+func namespaceNotAllowed(wg *v1alpha1.Wireguard, peer *v1alpha1.WireguardPeer) (notReady, bool) {
+	allowed := wg.Spec.AllowedNamespaces
+	if allowed == nil || allowed.From != v1alpha1.NamespacesFromSame || peer.Namespace == wg.Namespace {
+		return notReady{}, false
+	}
+	return notReady{
+		Status:           v1alpha1.Error,
+		Message:          fmt.Sprintf("Wireguard %s/%s does not accept peers from namespace %s", wg.Namespace, wg.Name, peer.Namespace),
+		Reason:           ReasonNamespaceNotAllowed,
+		ConditionMessage: fmt.Sprintf("Wireguard %s/%s sets spec.allowedNamespaces.from to Same, so it admits only peers in namespace %s", wg.Namespace, wg.Name, wg.Namespace),
+	}, true
+}
+
 // validatePeerCIDR returns nil when cidr is a canonical IPv4 prefix (no host bits set) of length
 // 30 or shorter, and an error naming the violated rule otherwise.
 func validatePeerCIDR(cidr string) error {
@@ -92,7 +117,7 @@ func validatePeerCIDR(cidr string) error {
 	return nil
 }
 
-// wireguardNotFound is the state of a peer whose spec.wireguardRef names no Wireguard in namespace.
+// wireguardNotFound is the state of a peer whose gatewayKey names no Wireguard: ref in namespace.
 func wireguardNotFound(ref, namespace string) notReady {
 	return notReady{
 		Status:           v1alpha1.Pending,
@@ -120,6 +145,7 @@ func addressPoolExhausted(cidr string) notReady {
 func desiredState(wg *v1alpha1.Wireguard, privateKey string, peers []v1alpha1.WireguardPeer) agent.State {
 	spec := *wg.Spec.DeepCopy()
 	spec.Gluetun = v1alpha1.GluetunSpec{}
+	spec.AllowedNamespaces = nil // admission policy is the operator's; the agent reads none of it
 	rendered := make([]v1alpha1.WireguardPeer, len(peers))
 	for i, peer := range peers {
 		rendered[i] = v1alpha1.WireguardPeer{
@@ -128,7 +154,9 @@ func desiredState(wg *v1alpha1.Wireguard, privateKey string, peers []v1alpha1.Wi
 			Status:     v1alpha1.WireguardPeerStatus{Address: peer.Status.Address},
 		}
 	}
-	slices.SortFunc(rendered, func(a, b v1alpha1.WireguardPeer) int { return cmp.Compare(a.Name, b.Name) })
+	slices.SortFunc(rendered, func(a, b v1alpha1.WireguardPeer) int {
+		return cmp.Or(cmp.Compare(a.Name, b.Name), cmp.Compare(a.Namespace, b.Namespace))
+	})
 
 	return agent.State{
 		Server: v1alpha1.Wireguard{
@@ -140,23 +168,27 @@ func desiredState(wg *v1alpha1.Wireguard, privateKey string, peers []v1alpha1.Wi
 	}
 }
 
-// wireguardForPeer maps a WireguardPeer to the Wireguard its spec.wireguardRef names, in the
-// peer's namespace. It returns nil for any other object and for an empty wireguardRef.
+// wireguardForPeer maps a WireguardPeer to the Wireguard gatewayKey names. It returns nil for any
+// other object and for an empty wireguardRef.
 func wireguardForPeer(_ context.Context, obj client.Object) []reconcile.Request {
 	peer, ok := obj.(*v1alpha1.WireguardPeer)
 	if !ok || peer.Spec.WireguardRef == "" {
 		return nil
 	}
-	return []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: peer.Namespace, Name: peer.Spec.WireguardRef}}}
+	return []reconcile.Request{{NamespacedName: gatewayKey(peer)}}
 }
 
 // peerStatusMatches reports whether peer already records nr: status.status, status.message,
-// no status.address (a peer the server cannot admit holds none), and a Ready condition with Status
-// False, nr.Reason, nr.ConditionMessage and ObservedGeneration == peer.Generation.
+// no status.address, endpoint, serverPublicKey or localCIDRs (a peer the server cannot admit holds
+// none), and a Ready condition with Status False, nr.Reason, nr.ConditionMessage and
+// ObservedGeneration == peer.Generation.
 func peerStatusMatches(peer *v1alpha1.WireguardPeer, nr notReady) bool {
 	c := meta.FindStatusCondition(peer.Status.Conditions, ConditionReady)
 	return peer.Status.Status == nr.Status &&
 		peer.Status.Address == "" &&
+		peer.Status.Endpoint == "" &&
+		peer.Status.ServerPublicKey == "" &&
+		len(peer.Status.LocalCIDRs) == 0 &&
 		peer.Status.Message == nr.Message &&
 		c != nil &&
 		c.Status == metav1.ConditionFalse &&
@@ -208,11 +240,11 @@ type addressLoser struct {
 
 // dedupeAddresses splits admissible peers into those that keep their state and those that must
 // give up a shared status.address. Among the holders of one address the peer with the oldest
-// creationTimestamp keeps it, ties going to the lexically smaller name; every other holder is a
+// creationTimestamp keeps it, ties going to the lexically smaller name, then namespace; every other holder is a
 // loser. Peers without an address are kept. keep preserves the input order.
 func dedupeAddresses(peers []v1alpha1.WireguardPeer) (keep []v1alpha1.WireguardPeer, losers []addressLoser) {
 	older := func(a, b *v1alpha1.WireguardPeer) bool {
-		return cmp.Or(a.CreationTimestamp.Compare(b.CreationTimestamp.Time), cmp.Compare(a.Name, b.Name)) < 0
+		return cmp.Or(a.CreationTimestamp.Compare(b.CreationTimestamp.Time), cmp.Compare(a.Name, b.Name), cmp.Compare(a.Namespace, b.Namespace)) < 0
 	}
 	holder := map[string]*v1alpha1.WireguardPeer{}
 	for i := range peers {
