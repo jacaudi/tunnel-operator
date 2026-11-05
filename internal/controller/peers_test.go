@@ -426,6 +426,12 @@ func TestDedupeAddresses(t *testing.T) {
 			wantLosers: []loser{{"young", "ns/old"}},
 		},
 		{
+			name:       "older wins even with the larger name",
+			peers:      []v1alpha1.WireguardPeer{peer("a", "10.8.0.2", t1), peer("b", "10.8.0.2", t0)},
+			wantKeep:   []string{"b"},
+			wantLosers: []loser{{"a", "ns/b"}},
+		},
+		{
 			name:       "tie goes to smaller name",
 			peers:      []v1alpha1.WireguardPeer{peer("b", "10.8.0.2", t0), peer("a", "10.8.0.2", t0)},
 			wantKeep:   []string{"a"},
