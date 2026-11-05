@@ -50,12 +50,15 @@ type WireguardSpec struct {
 	AllowedNamespaces *AllowedNamespaces `json:"allowedNamespaces,omitempty"`
 }
 
+// FromNamespaces says which namespaces an AllowedNamespaces admits.
+type FromNamespaces string
+
 // Values of AllowedNamespaces.From.
 const (
-	// NamespacesFromAll admits peers from every namespace.
-	NamespacesFromAll = "All"
-	// NamespacesFromSame admits only peers in the Wireguard's own namespace.
-	NamespacesFromSame = "Same"
+	// FromAll admits peers from every namespace.
+	FromAll FromNamespaces = "All"
+	// FromSame admits only peers in the Wireguard's own namespace.
+	FromSame FromNamespaces = "Same"
 )
 
 // AllowedNamespaces selects the namespaces whose peers a Wireguard admits.
@@ -63,7 +66,7 @@ type AllowedNamespaces struct {
 	// From is All (peers from every namespace) or Same (only the Wireguard's own namespace).
 	// +kubebuilder:validation:Enum=All;Same
 	// +kubebuilder:default=All
-	From string `json:"from,omitempty"`
+	From FromNamespaces `json:"from,omitempty"`
 }
 
 // WireguardPodSpec defines spec for respective containers created for Wireguard

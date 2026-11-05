@@ -107,7 +107,7 @@ var _ = Describe("cross-namespace attachment", func() {
 	})
 
 	It("refuses a foreign peer under Same, and admits it once the gateway allows every namespace", func() {
-		gateway := readyGateway("vpn-same", &v1alpha1.AllowedNamespaces{From: v1alpha1.NamespacesFromSame})
+		gateway := readyGateway("vpn-same", &v1alpha1.AllowedNamespaces{From: v1alpha1.FromSame})
 		local, _ := createPeer(gatewayNS, "same-local", gateway)
 		foreign, foreignKey := createPeer(appNS, "same-foreign", gateway)
 
@@ -120,7 +120,7 @@ var _ = Describe("cross-namespace attachment", func() {
 			if err := k8sClient.Get(context.Background(), gateway, wg); err != nil {
 				return err
 			}
-			wg.Spec.AllowedNamespaces = &v1alpha1.AllowedNamespaces{From: v1alpha1.NamespacesFromAll}
+			wg.Spec.AllowedNamespaces = &v1alpha1.AllowedNamespaces{From: v1alpha1.FromAll}
 			return k8sClient.Update(context.Background(), wg)
 		}, timeout, interval).Should(Succeed())
 		Eventually(peerAddress(foreign), timeout, interval).Should(Equal("10.8.0.3"))
@@ -168,7 +168,7 @@ var _ = Describe("cross-namespace attachment", func() {
 		got := &v1alpha1.Wireguard{}
 		Expect(k8sClient.Get(context.Background(), client.ObjectKeyFromObject(wg), got)).Should(Succeed())
 		Expect(got.Spec.AllowedNamespaces).ShouldNot(BeNil())
-		Expect(got.Spec.AllowedNamespaces.From).Should(Equal(v1alpha1.NamespacesFromAll))
+		Expect(got.Spec.AllowedNamespaces.From).Should(Equal(v1alpha1.FromAll))
 
 		bad := &v1alpha1.Wireguard{
 			ObjectMeta: metav1.ObjectMeta{Name: "vpn-bad", Namespace: gatewayNS},
