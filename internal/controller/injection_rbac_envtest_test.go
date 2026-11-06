@@ -14,10 +14,52 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
+	"k8s.io/client-go/kubernetes/scheme"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/config"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/jacaudi/wireguard-operator/internal/resources"
 )
+
+// rbManager runs the suite's ClientRoleBindingReconciler.
+var rbManager *roleBindingManager
+
+// roleBindingManager is a manager that runs only the ClientRoleBindingReconciler, on the caches the real
+// manager uses, so a spec can stop it as if the operator were down and start another.
+type roleBindingManager struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+func startRoleBindingManager() *roleBindingManager {
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+		Scheme:  scheme.Scheme,
+		Cache:   CacheOptions(),
+		Metrics: metricsserver.Options{BindAddress: "0"},
+		// A restarted manager registers the same controller name again.
+		Controller: config.Controller{SkipNameValidation: new(true)},
+	})
+	Expect(err).NotTo(HaveOccurred())
+	Expect((&ClientRoleBindingReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr)).To(Succeed())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m := &roleBindingManager{cancel: cancel, done: make(chan struct{})}
+	go func() {
+		defer GinkgoRecover()
+		defer close(m.done)
+		Expect(mgr.Start(ctx)).To(Succeed())
+	}()
+	// Caches synced: from here an event or a start-up pass is acted on.
+	Expect(mgr.GetCache().WaitForCacheSync(ctx)).To(BeTrue())
+	return m
+}
+
+func (m *roleBindingManager) stop() {
+	m.cancel()
+	Eventually(m.done, 30*time.Second).Should(BeClosed())
+}
 
 var _ = Describe("client RoleBinding", func() {
 	const (
@@ -73,6 +115,40 @@ var _ = Describe("client RoleBinding", func() {
 		deletePod(second)
 		Eventually(func() bool { _, err := getBinding(); return apierrors.IsNotFound(err) }, timeout, interval).Should(BeTrue(),
 			"the last labelled pod is gone, so the binding must go")
+	})
+
+	It("recreates the binding when it is deleted while labelled pods run", func() {
+		pod := injectedPod()
+		defer deletePod(pod)
+		Eventually(func() error { _, err := getBinding(); return err }, timeout, interval).Should(Succeed())
+		first, _ := getBinding()
+
+		Expect(k8sClient.Delete(context.Background(), first)).To(Succeed())
+		Eventually(func() (types.UID, error) {
+			rb, err := getBinding()
+			return rb.UID, err
+		}, timeout, interval).ShouldNot(Equal(first.UID), "a pod still needs the binding, so a deleted one must come back")
+	})
+
+	It("removes a binding left behind while the operator was down", func() {
+		pod := injectedPod()
+		Eventually(func() error { _, err := getBinding(); return err }, timeout, interval).Should(Succeed())
+
+		rbManager.stop()
+		restarted := false
+		defer func() {
+			if !restarted {
+				rbManager = startRoleBindingManager()
+			}
+		}()
+		deletePod(pod)
+		Consistently(func() error { _, err := getBinding(); return err }, 2*time.Second, interval).Should(Succeed(),
+			"with the operator down nothing removes the binding")
+
+		rbManager = startRoleBindingManager()
+		restarted = true
+		Eventually(func() bool { _, err := getBinding(); return apierrors.IsNotFound(err) }, timeout, interval).Should(BeTrue(),
+			"no labelled pod remains, so a restarted operator must remove the binding")
 	})
 
 	It("is not created for a pod that injection does not apply to", func() {
