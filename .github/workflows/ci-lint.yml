@@ -188,7 +188,7 @@ jobs:
           fi
           echo "generated files match the API types"
 
-      # release.yaml is the documented install path and is ALSO generated — from
+      # release.yaml is committed (release-please bumps its pins) and is ALSO generated — from
       # config/, by kustomize. See hack/release-file-drift.sh for why the image
       # pins are read back out of the file instead of being passed in.
       - name: Verify release.yaml is not stale
