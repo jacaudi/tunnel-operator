@@ -67,7 +67,7 @@ jobs:
       packages: write
     uses: ./.github/workflows/ci-build.yml
     with:
-      image: ghcr.io/jacaudi/wireguard-operator/manager
+      image: ghcr.io/jacaudi/tunnel-operator/manager
       # Both images build from the REPO ROOT — they COPY go.mod, cmd, api and
       # internal — so the context is `.` for both and only the Dockerfile path
       # differs. See ci-build.yml's `file:` input for why that input exists here
@@ -92,7 +92,7 @@ jobs:
       packages: write
     uses: ./.github/workflows/ci-build.yml
     with:
-      image: ghcr.io/jacaudi/wireguard-operator/agent
+      image: ghcr.io/jacaudi/tunnel-operator/agent
       file: images/agent/Dockerfile
 
   # Boot the built image and assert it behaves. What "behaves" means is repo
@@ -122,9 +122,10 @@ jobs:
   # forever with nothing explaining why. Both secrets are set on this repo
   # (verified: actions/secrets reports APP_ID and APP_PRIVATE_KEY).
   #
-  # The manifest is seeded at 2.11.0 — the version this fork's tree descends
-  # from — via .github/release-please-manifest.json and never via `release-as`,
-  # which is a permanent override rather than a bootstrap.
+  # The manifest is reset to 0.0.0 — via .github/release-please-manifest.json and
+  # never via `release-as`, which is a permanent override rather than a
+  # bootstrap — so release-please cuts the first release at `initial-version`
+  # 0.1.0.
   release:
     needs: [smoke]
     if: ${{ github.ref == 'refs/heads/main' }}
@@ -154,7 +155,7 @@ jobs:
     with:
       source: ${{ needs.build.outputs.image }}
       version: ${{ needs.release.outputs.tag_name }}
-      image: ghcr.io/jacaudi/wireguard-operator/manager
+      image: ghcr.io/jacaudi/tunnel-operator/manager
 
   # THE AGENT NEEDS ITS OWN RETAG, and its absence would not fail anything.
   # ci-retag.yml takes a single source/image pair, so the second published image
@@ -173,7 +174,7 @@ jobs:
     with:
       source: ${{ needs.build-agent.outputs.image }}
       version: ${{ needs.release.outputs.tag_name }}
-      image: ghcr.io/jacaudi/wireguard-operator/agent
+      image: ghcr.io/jacaudi/tunnel-operator/agent
 
   # THE single required status check — point every ruleset at `ci` and nothing
   # else. A REGULAR job, never a called workflow: a job that CALLS a reusable

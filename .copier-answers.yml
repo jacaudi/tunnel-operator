@@ -4,11 +4,11 @@ _src_path: gh:jacaudi/template
 build_context: .
 extra_build_contexts: []
 has_chart: false
-image_name: ghcr.io/jacaudi/wireguard-operator/manager
+image_name: ghcr.io/jacaudi/tunnel-operator/manager
 integration_kind: envtest
 lang_go: true
 lang_node: false
 lang_python: false
-repo_name: wireguard-operator
+repo_name: tunnel-operator
 variant: service
 

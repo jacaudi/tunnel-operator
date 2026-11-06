@@ -93,7 +93,7 @@ test-ci: manifests generate fmt vet envtest ## Run tests with JUnit output for C
 # not run and CI goes green having tested strictly less.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" go test -json ./... -tags=integration -coverprofile cover.out > test-report.json
 
-TEST_RUNNER_IMAGE ?= wireguard-operator-test:local
+TEST_RUNNER_IMAGE ?= tunnel-operator-test:local
 
 test-in-docker: ## Build test runner image and execute tests inside it.
 	docker build -t $(TEST_RUNNER_IMAGE) -f images/test/Dockerfile .
