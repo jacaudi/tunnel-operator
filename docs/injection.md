@@ -16,7 +16,10 @@ template:
 
 Only the value `"true"` opts a pod in. Both policies match pod creation only, so the label takes effect
 when a pod is created: roll an existing workload for it to be injected. Labelling a running pod neither
-injects nor rejects it, though it does make the operator create the namespace's RoleBinding.
+injects nor rejects it, though it does make the operator create the namespace's `RoleBinding`.
+Removing the label from a running injected pod is no safer: if it was the last labelled pod, the operator
+deletes the namespace's `RoleBinding`, and that pod's sidecar keeps running but loses its API access. Roll
+the workload instead of unlabelling running pods.
 
 ## How it works
 
@@ -36,7 +39,7 @@ namespace is not skipped, so a labelled workload there is injected.
 
 Because admission runs in the API server, injection keeps working while the operator is down. Two
 things wait for it: a change of default gateway, and the first labelled pod in a namespace, because the
-operator creates that namespace's RoleBinding when the pod appears (the sidecar cannot register its
+operator creates that namespace's `RoleBinding` when the pod appears (the sidecar cannot register its
 peer until then).
 
 ## The default gateway
@@ -69,7 +72,8 @@ the reason.
   `MutatingAdmissionPolicy` beta; see [installation](installation.md#prerequisites). On 1.36 and
   later it is GA and on by default. The operator writes `admissionregistration.k8s.io/v1` when the
   cluster serves it, else `v1beta1`. When neither is served it writes nothing and logs that, and the
-  backstop rejects labelled pods.
+  backstop rejects labelled pods. It asks again every ten minutes, so enabling the beta later is picked
+  up without restarting the operator.
 - **Pod Security `privileged` in the workload's namespace.** Pod Security evaluates the mutated pod,
   and the sidecar needs `NET_ADMIN`. The operator never relaxes Pod Security; you set the namespace
   label.
@@ -126,8 +130,8 @@ injected again and passes the backstop.
   so upgrading the operator upgrades the sidecar of every new pod. Running pods keep the sidecar they
   were created with until you roll them.
 - **A restart of the operator changes nothing.** The policies stay in the cluster. On startup the
-  operator reconciles them against the current default gateway, and removes the RoleBinding of any
-  namespace whose labelled pods were deleted while it was down. It also recreates a RoleBinding
+  operator reconciles them against the current default gateway, and removes the `RoleBinding` of any
+  namespace whose labelled pods were deleted while it was down. It also recreates a `RoleBinding`
   deleted by hand while labelled pods run.
 - **Gateway pods carry a label now.** The upgrade that introduced injection adds
   `wireguard-operator.io/component: gateway` to each gateway pod template, so each gateway rolls
