@@ -38,10 +38,15 @@ func injectPolicyExists() (bool, error) {
 	return err == nil, err
 }
 
-// waitForNoInjectPolicy blocks until the operator has removed its policy, and the apiserver has stopped
-// enforcing it: the backstop alone then decides every labelled pod.
+// waitForNoInjectPolicy blocks until the operator has removed its policy and left it removed, and the
+// apiserver has stopped enforcing it: the backstop alone then decides every labelled pod.
+//
+// Absent once is not enough. The reconciler reads Wireguards from a cache, so a pass triggered by one
+// deletion can still see the other and briefly write the policy for it, until the next event removes it
+// again. The policy must stay absent for a second, which outlasts that.
 func waitForNoInjectPolicy() {
 	Eventually(injectPolicyExists, 30*time.Second, 250*time.Millisecond).Should(BeFalse())
+	Consistently(injectPolicyExists, time.Second, 100*time.Millisecond).Should(BeFalse())
 	// A deleted policy takes effect asynchronously: probe with a labelled pod that is refused once it has.
 	waitForBackstop()
 }
