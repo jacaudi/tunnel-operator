@@ -1,6 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "separate-pull-requests": false,
+  "bump-minor-pre-major": true,
+  "bootstrap-sha": "7cda258fdbed2232e1a3fe8383ad7330f597dd90",
   "pull-request-title-pattern": "chore: release ${version}",
   "include-component-in-tag": false,
   "changelog-sections": [
@@ -63,7 +65,13 @@
   "packages": {
     ".": {
       "release-type": "go",
-      "include-v-in-tag": true
+      "include-v-in-tag": true,
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "release.yaml"
+        }
+      ]
     }
   }
 }

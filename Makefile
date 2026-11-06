@@ -172,11 +172,18 @@ update-manager-image: kustomize
 	$(info MANAGER_IMAGE: "$(MANAGER_IMAGE)")
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${MANAGER_IMAGE}
 
+# The two pin lines get release-please's generic-updater marker, so each release
+# PR rewrites them (release-please-config.json lists release.yaml under
+# extra-files). Anchored to exactly those lines: the `--agent-image=` arg and the
+# eight-space manager `image:`; hack/release-file-drift.sh strips the marker again.
 generate-release-file: kustomize
 	@for f in $(PINNED_AT_BUILD); do cp "$$f" "$$f.pre-build"; done
 	@trap 'for f in $(PINNED_AT_BUILD); do mv "$$f.pre-build" "$$f"; done' EXIT; \
 	  $(MAKE) update-agent-image update-manager-image && \
-	  $(KUSTOMIZE) build config/default > release.yaml
+	  $(KUSTOMIZE) build config/default > release.yaml.tmp && \
+	  sed -e 's|^\( *- --agent-image=.*\)$$|\1 # x-release-please-version|' \
+	      -e 's|^\(        image: .*\)$$|\1 # x-release-please-version|' \
+	      release.yaml.tmp > release.yaml && rm release.yaml.tmp
 
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
