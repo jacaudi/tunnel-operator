@@ -74,11 +74,12 @@ make deploy IMG="$MANAGER_IMAGE"
 
 `make install` applies only the CRDs. `make run` then starts the manager against your current
 kubeconfig, but it passes no `--agent-image`, so the manager exits at startup. Run it directly
-instead:
+instead. The manager also requires `POD_NAMESPACE`, the namespace it treats as its own (see
+[injection.md](injection.md#the-default-gateway)); set it to the namespace you run it for:
 
 ```sh
 make install
-go run ./cmd/manager/main.go --agent-image=ghcr.io/jacaudi/wireguard-operator/agent:latest
+POD_NAMESPACE=wireguard-system go run ./cmd/manager/main.go --agent-image=ghcr.io/jacaudi/wireguard-operator/agent:latest
 ```
 
 ## Install with Helm (OCI)
@@ -94,10 +95,10 @@ Source of truth: [`cmd/manager/main.go`](../cmd/manager/main.go). `config/defaul
 
 | Flag | Default | Purpose |
 |---|---|---|
-| `--agent-image` | — | **Required.** Image for the server pod's `agent` and `sysctl` containers. Without it the manager exits at startup. |
+| `--agent-image` | — | **Required.** Image for the server pod's `agent` and `sysctl` containers, and for the client sidecar the operator injects into labelled pods. Without it the manager exits at startup. |
 | `--agent-image-pull-policy` | `IfNotPresent` | Pull policy for those two containers. |
 | `--leader-elect` | `false` | Enable leader election (lease `a6d3bffc.wireguard-operator.io`). |
-| `--leader-election-namespace` | `""` | Namespace for the lease. Empty → `POD_NAMESPACE`, then the pod's service-account namespace. |
+| `--leader-election-namespace` | `""` | Namespace for the lease. Empty → `POD_NAMESPACE`, which the manager requires. |
 | `--metrics-bind-address` | `:8080` | Metrics endpoint, behind Kubernetes authentication and authorization. |
 | `--health-probe-bind-address` | `:8081` | `/healthz` and `/readyz`. |
 
