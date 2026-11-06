@@ -100,7 +100,7 @@ testbin/*
 # .github/workflows/release.yaml.
 #
 # release.yaml IS DELIBERATELY NOT LISTED HERE. It is generated, but it is also
-# committed and is this repo's documented install path, so ci-lint.yml gates it
+# committed (each release PR bumps its image pins), so ci-lint.yml gates it
 # for drift against config/. It was previously both tracked AND ignored — inert,
 # because tracking wins, but a trap: the gate's own remediation is "regenerate
 # and commit", and a plain `git add release.yaml` against an ignored path is a
