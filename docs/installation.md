@@ -1,8 +1,6 @@
 # Installation
 
-Check the [prerequisites](prerequisites.md) first: Kubernetes 1.34 or later (with the
-`MutatingAdmissionPolicy` beta enabled on 1.34 and 1.35), Pod Security `privileged` for the
-gateway's namespace, and Go 1.26 and `make` on your workstation.
+Check the [prerequisites](prerequisites.md) first.
 
 ## Install from source
 
@@ -49,11 +47,15 @@ make deploy IMG=ghcr.io/jacaudi/wireguard-operator/manager:latest
 kubectl -n network rollout status deployment/wireguard-controller-manager
 ```
 
+> **`make undeploy` deletes the install namespace and everything in it**, because `config/default`
+> renders the `Namespace` object. If `network` holds other workloads, uninstall with the
+> [namespace-preserving command](#uninstall) instead.
+
 kustomize renames the rendered `Namespace` and every object in it, and points the role bindings at
 the new namespace. The operator reads its namespace from `POD_NAMESPACE`, so nothing else changes,
 except that the [default gateway](injection.md#the-default-gateway) must now live in `network`.
-Keep the edit while the operator is installed: `make undeploy` renders the same files to know what
-to delete.
+Keep the edit while the operator is installed: uninstalling renders the same files to know what to
+delete.
 
 ### Build your own images
 
@@ -120,17 +122,22 @@ make undeploy
 ```
 
 `make undeploy` deletes everything `config/default` renders, **including the CRDs and the
-operator's namespace**, so any `Wireguard` or `WireguardPeer` still in the cluster is deleted
-too. To remove only the CRDs from a workstation install, run `make uninstall`.
+operator's namespace with everything in it**, so any `Wireguard` or `WireguardPeer` still in the
+cluster is deleted too. To keep the namespace, delete the same objects without the `Namespace`:
 
-The operator also writes objects at runtime that `make undeploy` and `kubectl delete -f release.yaml`
-do not remove, because a cluster-scoped policy cannot be owned by the namespaced operator: the
-sidecar-injection `MutatingAdmissionPolicy` and its binding, and a `RoleBinding` in each namespace
+```sh
+bin/kustomize build config/default |
+  awk '/^---$/{if(!ns)printf "%s",d; d=""; ns=0} {d=d $0 "\n"} /^kind: Namespace$/{ns=1} END{if(!ns)printf "%s",d}' |
+  kubectl delete -f -
+```
+
+To remove only the CRDs from a workstation install, run `make uninstall`.
+
+The operator also writes objects at runtime that neither command removes, because a cluster-scoped
+policy cannot be owned by the namespaced operator: the sidecar-injection `MutatingAdmissionPolicy` and its binding, and a `RoleBinding` in each namespace
 that had labelled pods. Remove them with:
 
 ```sh
 kubectl delete mutatingadmissionpolicy,mutatingadmissionpolicybinding,rolebinding -A \
   -l app.kubernetes.io/managed-by=wireguard-operator
 ```
-
-See [injection.md](injection.md#uninstall).
