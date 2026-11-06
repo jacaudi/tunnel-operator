@@ -198,10 +198,11 @@ The sidecar logs to stderr. Start with `kubectl logs <pod> -c wg-client`.
 
 ## Without the sidecar
 
-A client the sidecar does not serve, such as a pod you cannot add an init container to,
-needs its own WireGuard configuration. Register a [`WireguardPeer`](crd-wireguardpeer.md) with your
-public key, wait for it to read `ready`, then build a configuration from these values. The Service
-is ClusterIP, so the client must run inside the cluster.
+A client the sidecar does not serve, such as a pod you cannot add an init container to, needs its
+own WireGuard configuration. Generate a key pair (`wg genkey | tee peer.key | wg pubkey`), register
+a [`WireguardPeer`](crd-wireguardpeer.md) with the public key, wait for it to read `ready`, then
+build a configuration from these values. The Service is ClusterIP, so the client must run inside
+the cluster.
 
 | Setting | Value | How to read it |
 |---|---|---|
