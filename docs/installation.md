@@ -96,7 +96,7 @@ Source of truth: [`cmd/manager/main.go`](../cmd/manager/main.go). `config/defaul
 | Flag | Default | Purpose |
 |---|---|---|
 | `--agent-image` | — | **Required.** Image for the server pod's `agent` and `sysctl` containers, and for the client sidecar the operator injects into labelled pods. Without it the manager exits at startup. |
-| `--agent-image-pull-policy` | `IfNotPresent` | Pull policy for those two containers. |
+| `--agent-image-pull-policy` | `IfNotPresent` | Pull policy for those two server-pod containers. The injected sidecar sets none. |
 | `--leader-elect` | `false` | Enable leader election (lease `a6d3bffc.wireguard-operator.io`). |
 | `--leader-election-namespace` | `""` | Namespace for the lease. Empty → `POD_NAMESPACE`, which the manager requires. |
 | `--metrics-bind-address` | `:8080` | Metrics endpoint, behind Kubernetes authentication and authorization. |
