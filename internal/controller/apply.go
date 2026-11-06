@@ -21,8 +21,9 @@ import (
 
 // FieldManager identifies this operator's Server-Side Apply field manager. It is part of the
 // on-cluster contract: changing it orphans field ownership on every existing object and leaves
-// stale entries in managedFields. Not a tunable.
-const FieldManager = "wireguard-operator"
+// stale entries in managedFields. It was renamed once, at the tunnel-operator rename, while no
+// installs existed, and must not change again. Not a tunable.
+const FieldManager = "tunnel-operator"
 
 // legacyFieldManagers names the Update-operation field manager that owns every field of an
 // object written by this operator before it used Server-Side Apply. The apiserver takes the

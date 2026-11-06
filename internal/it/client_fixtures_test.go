@@ -14,7 +14,7 @@ import (
 const clientExample = "../../examples/client.yaml"
 
 // clientImagePlaceholder is the image reference examples/client.yaml carries for users to replace.
-const clientImagePlaceholder = "ghcr.io/jacaudi/wireguard-operator/agent:vX.Y.Z"
+const clientImagePlaceholder = "ghcr.io/jacaudi/tunnel-operator/agent:vX.Y.Z"
 
 // clientManifests returns examples/client.yaml with its image placeholder replaced by image. It fails
 // the spec unless the placeholder occurs exactly once.

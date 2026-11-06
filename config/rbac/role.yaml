@@ -21,7 +21,7 @@ rules:
 - apiGroups:
   - admissionregistration.k8s.io
   resourceNames:
-  - wireguard-operator-inject
+  - tunnel-operator-inject
   resources:
   - mutatingadmissionpolicies
   - mutatingadmissionpolicybindings
@@ -57,7 +57,7 @@ rules:
 - apiGroups:
   - rbac.authorization.k8s.io
   resourceNames:
-  - wireguard-operator-client
+  - tunnel-operator-client
   resources:
   - clusterroles
   verbs:
@@ -65,7 +65,7 @@ rules:
 - apiGroups:
   - rbac.authorization.k8s.io
   resourceNames:
-  - wireguard-operator-client
+  - tunnel-operator-client
   resources:
   - rolebindings
   verbs:

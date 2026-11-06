@@ -76,7 +76,7 @@ var _ = Describe("require-injection backstop", func() {
 		err := create(labelledPod("default"))
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring(notInjectedMessage))
-		Expect(err.Error()).To(ContainSubstring("annotated wireguard-operator.io/default=true"))
+		Expect(err.Error()).To(ContainSubstring("annotated tunnel-operator.io/default=true"))
 	})
 
 	It("rejects a labelled hostNetwork pod with the hostNetwork message", func() {

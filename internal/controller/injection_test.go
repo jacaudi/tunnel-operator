@@ -53,7 +53,7 @@ func TestDefaultGateway(t *testing.T) {
 		{
 			name:    "two, named in order",
 			list:    []v1alpha1.Wireguard{wgIn("network", "b", isDefault), wgIn("network", "a", isDefault)},
-			wantErr: "2 Wireguards in namespace network are annotated wireguard-operator.io/default=true: a, b",
+			wantErr: "2 Wireguards in namespace network are annotated tunnel-operator.io/default=true: a, b",
 		},
 		{
 			name:    "only outside the operator's namespace",

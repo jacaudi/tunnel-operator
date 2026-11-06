@@ -14,7 +14,7 @@ import (
 const (
 	// operatorNamespace is where release.yaml installs the operator, and so the only namespace whose
 	// default-gateway annotation the operator honours.
-	operatorNamespace = "wireguard-system"
+	operatorNamespace = "tunnel-system"
 	// appsNamespace holds the labelled workloads that attach to the gateway across a namespace boundary.
 	appsNamespace = "inject-apps"
 
@@ -23,7 +23,7 @@ const (
 
 	// injectPolicy is the MutatingAdmissionPolicy the operator writes, addressed by the beta version this
 	// cluster serves.
-	injectPolicy = "mutatingadmissionpolicies.v1beta1.admissionregistration.k8s.io/wireguard-operator-inject"
+	injectPolicy = "mutatingadmissionpolicies.v1beta1.admissionregistration.k8s.io/tunnel-operator-inject"
 )
 
 // labelledDeployment returns a plain Deployment named name with no sidecar block, whose pods opt in to

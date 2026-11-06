@@ -23,7 +23,7 @@ spec:
         kubectl.kubernetes.io/default-container: manager
       labels:
         control-plane: controller-manager
-        wireguard-operator.io/component: operator
+        tunnel-operator.io/component: operator
     spec:
       securityContext:
         fsGroup: 65534

@@ -291,22 +291,22 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred(), "kubectl apply -f %s: %s", releasePath, exitStderr(err))
 
 	expectedResources := []string{
-		"namespace/wireguard-system",
+		"namespace/tunnel-system",
 		"customresourcedefinition.apiextensions.k8s.io/wireguardpeers.vpn.tunnel-operator.io",
 		"customresourcedefinition.apiextensions.k8s.io/wireguards.vpn.tunnel-operator.io",
-		"serviceaccount/wireguard-controller-manager",
-		"serviceaccount/wireguard-metrics-reader",
-		"role.rbac.authorization.k8s.io/wireguard-leader-election-role",
-		"clusterrole.rbac.authorization.k8s.io/wireguard-manager-role",
-		"clusterrole.rbac.authorization.k8s.io/wireguard-metrics-reader",
-		"clusterrole.rbac.authorization.k8s.io/wireguard-operator-client",
-		"rolebinding.rbac.authorization.k8s.io/wireguard-leader-election-rolebinding",
-		"clusterrolebinding.rbac.authorization.k8s.io/wireguard-manager-rolebinding",
-		"clusterrolebinding.rbac.authorization.k8s.io/wireguard-metrics-reader",
-		"service/wireguard-controller-manager-metrics-service",
-		"deployment.apps/wireguard-controller-manager",
-		"validatingadmissionpolicy.admissionregistration.k8s.io/wireguard-operator-require-injection",
-		"validatingadmissionpolicybinding.admissionregistration.k8s.io/wireguard-operator-require-injection",
+		"serviceaccount/tunnel-controller-manager",
+		"serviceaccount/tunnel-metrics-reader",
+		"role.rbac.authorization.k8s.io/tunnel-leader-election-role",
+		"clusterrole.rbac.authorization.k8s.io/tunnel-manager-role",
+		"clusterrole.rbac.authorization.k8s.io/tunnel-metrics-reader",
+		"clusterrole.rbac.authorization.k8s.io/tunnel-operator-client",
+		"rolebinding.rbac.authorization.k8s.io/tunnel-leader-election-rolebinding",
+		"clusterrolebinding.rbac.authorization.k8s.io/tunnel-manager-rolebinding",
+		"clusterrolebinding.rbac.authorization.k8s.io/tunnel-metrics-reader",
+		"service/tunnel-controller-manager-metrics-service",
+		"deployment.apps/tunnel-controller-manager",
+		"validatingadmissionpolicy.admissionregistration.k8s.io/tunnel-operator-require-injection",
+		"validatingadmissionpolicybinding.admissionregistration.k8s.io/tunnel-operator-require-injection",
 	}
 
 	Expect(strings.Split(strings.Trim(strings.ReplaceAll(string(b), " created", ""), "\n"), "\n")).To(BeEquivalentTo(expectedResources))
@@ -320,8 +320,8 @@ var _ = BeforeSuite(func() {
 	// wait until operator is ready
 	Eventually(func() int {
 		deploymentKey := types.NamespacedName{
-			Namespace: "wireguard-system",
-			Name:      "wireguard-controller-manager",
+			Namespace: "tunnel-system",
+			Name:      "tunnel-controller-manager",
 		}
 
 		deployment := &v12.Deployment{}
