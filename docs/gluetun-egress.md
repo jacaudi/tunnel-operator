@@ -32,22 +32,17 @@ the operator's value takes precedence.
 
 ## `localCIDRs`
 
-`spec.localCIDRs` is required: list the cluster's pod, Service and node CIDRs, and
-`169.254.20.10/32` if you use NodeLocal DNSCache. Cluster traffic stays in the cluster:
+`spec.localCIDRs` is required: the cluster's pod, Service and node ranges, and `169.254.20.10/32` if
+you use NodeLocal DNSCache. [Prerequisites](prerequisites.md#localcidrs) shows how to find them and
+lists the checks the operator makes. Cluster traffic stays in the cluster:
 
 - Clients route these ranges over the CNI, never through the tunnel.
 - The server hands them to gluetun as `FIREWALL_OUTBOUND_SUBNETS`, so gluetun lets the pod answer
   cluster addresses over `eth0`.
 
-The operator checks that each entry is a canonical IPv4 CIDR, that the Service's ClusterIP falls
-inside one (clients route everything outside `localCIDRs` into the tunnel, including the gateway's
-own Service), and that none overlaps `peerCIDR`. An entry that contains `192.0.2.1` sets `Degraded`
-with reason `ProbeAddressInLocalCIDRs` and no Deployment is rendered, because the agent's readiness
-check routes that address through the tunnel (see
-[Readiness follows the tunnel](#readiness-follows-the-tunnel)). The operator does **not** check that
-`localCIDRs` avoids the provider's tunnel range. An entry that overlaps it keeps that traffic off the
-tunnel, so keep your `localCIDRs` outside the range your provider uses; gluetun's firewall
-documentation says the same of `FIREWALL_OUTBOUND_SUBNETS`.
+The operator does **not** check that `localCIDRs` avoids the provider's tunnel range. An entry that
+overlaps it keeps that traffic off the tunnel, so keep your `localCIDRs` outside the range your
+provider uses; gluetun's firewall documentation says the same of `FIREWALL_OUTBOUND_SUBNETS`.
 
 ## Fail closed by routing
 
@@ -67,7 +62,8 @@ pref 102   iif wg0              lookup 51822   # agent: table 51822 = blackhole 
 - **Rules 98 to 101** are gluetun's. Rules 98 to 100 keep local, outbound-subnet and inbound
   traffic on `eth0`; rule 101 routes everything else into `tun0` while the tunnel is up. Rules 98 and
   99 match by destination, so a peer packet addressed inside `localCIDRs` routes to `eth0` and is
-  stopped by the `FORWARD` drop policy rather than by routing. Traffic for the internet never reaches
+  stopped by the `FORWARD` drop policy rather than by routing (but see the window after a firewall
+  rollback, under [The iptables rules](#the-iptables-rules)). Traffic for the internet never reaches
   the main table.
 - **Rule 102** catches whatever gluetun's rules did not route and blackholes it. This is the
   fail-closed rule: the pod's main-table default route through `eth0` is unreachable for peer
@@ -92,9 +88,16 @@ nat     -A POSTROUTING -s <peerCIDR> -o tun0 -j MASQUERADE
 
 Peer traffic is masqueraded into gluetun's tunnel, never out of `eth0`. The agent re-asserts the
 routing and these rules after every state change and every 10 seconds, adding only a rule whose
-check fails, so a rule is never duplicated. When gluetun restarts it can flush its firewall, and the
-rules come back within one interval. During that window the blackhole rule drops peer traffic, so a
-gluetun restart costs an outage, not a leak.
+check fails, so a rule is never duplicated. When gluetun restarts, or rolls its firewall back, it
+can flush these rules, and the agent restores them within one interval. Routing keeps internet-bound
+peer traffic off `eth0` throughout, but what happens in the window depends on the cause:
+
+- **A gluetun restart** also takes the tunnel down, so rule 102 drops peer traffic. The restart
+  costs an outage, not a leak.
+- **A firewall rollback alone** leaves the tunnel up, so the blackhole does not apply. If the
+  rollback leaves the `FORWARD` policy at `ACCEPT`, a peer packet addressed inside `localCIDRs`
+  can be forwarded out of `eth0` to a cluster network for up to 10 seconds, until the agent
+  restores `DROP`. That reaches the cluster, not the internet.
 
 ## Readiness follows the tunnel
 

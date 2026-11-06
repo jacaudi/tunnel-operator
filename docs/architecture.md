@@ -32,7 +32,7 @@ nothing more than a public key and the addresses routed to it.
 
 ## Data path
 
-What works today: a client that holds a registered key reaches the server's `wg0` through the
+A client that holds a registered key reaches the server's `wg0` through the
 ClusterIP Service, and the server forwards its traffic into a gluetun container in the same pod,
 which holds the tunnel to the provider.
 
