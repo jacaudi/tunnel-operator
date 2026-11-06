@@ -14,8 +14,9 @@ template:
       wireguard-operator.io/enabled: "true"
 ```
 
-Only the value `"true"` opts a pod in. Admission sees only new pods, so roll an existing workload
-for the label to take effect.
+Only the value `"true"` opts a pod in. Both policies match pod creation only, so the label takes effect
+when a pod is created: roll an existing workload for it to be injected. Labelling a running pod neither
+injects nor rejects it, though it does make the operator create the namespace's RoleBinding.
 
 ## How it works
 
@@ -33,8 +34,10 @@ install, before the operator has started, and it holds on a cluster that does no
 label (the gateway and the operator itself) and any pod in `kube-system`. The operator's own
 namespace is not skipped, so a labelled workload there is injected.
 
-Because admission runs in the API server, injection keeps working while the operator is down. Only a
-change of default gateway waits for it.
+Because admission runs in the API server, injection keeps working while the operator is down. Two
+things wait for it: a change of default gateway, and the first labelled pod in a namespace, because the
+operator creates that namespace's RoleBinding when the pod appears (the sidecar cannot register its
+peer until then).
 
 ## The default gateway
 
@@ -123,7 +126,9 @@ injected again and passes the backstop.
   so upgrading the operator upgrades the sidecar of every new pod. Running pods keep the sidecar they
   were created with until you roll them.
 - **A restart of the operator changes nothing.** The policies stay in the cluster. On startup the
-  operator reconciles them against the current default gateway.
+  operator reconciles them against the current default gateway, and removes the RoleBinding of any
+  namespace whose labelled pods were deleted while it was down. It also recreates a RoleBinding
+  deleted by hand while labelled pods run.
 - **Gateway pods carry a label now.** The upgrade that introduced injection adds
   `wireguard-operator.io/component: gateway` to each gateway pod template, so each gateway rolls
   once.

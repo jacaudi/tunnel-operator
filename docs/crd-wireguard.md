@@ -75,6 +75,11 @@ and are deleted with it.
 
 ## Lifecycle notes
 
+- **A default gateway is chosen by annotation, in the operator's namespace only.** A `Wireguard`
+  annotated `wireguard-operator.io/default: "true"` is the gateway that injected sidecars attach to,
+  but only when it is in the namespace the operator runs in; the annotation anywhere else is ignored.
+  Exactly one such `Wireguard` must exist for injection to run. See
+  [injection.md](injection.md#the-default-gateway).
 - **The server key is minted once.** The operator generates the key pair when the Secret does not
   exist and reuses it afterwards. Deleting the Secret makes the next reconcile mint a new key,
   and every client then needs the new public key.
