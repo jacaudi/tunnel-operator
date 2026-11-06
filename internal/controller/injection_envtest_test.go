@@ -195,7 +195,7 @@ var _ = Describe("sidecar injection policy", func() {
 			}
 			created = append(created, pod)
 			return pod.Annotations, nil
-		}, 30*time.Second, 250*time.Millisecond).Should(HaveKeyWithValue("test.wireguard-operator.io/touched", "true"))
+		}, 30*time.Second, 250*time.Millisecond).Should(HaveKeyWithValue("test.tunnel-operator.io/touched", "true"))
 		pod := created[len(created)-1]
 		Expect(pod.Spec.InitContainers).To(HaveLen(1), "reinvocation must not inject a second sidecar")
 	})
@@ -299,8 +299,8 @@ func installTouchPolicy() {
 		"mutations": []any{map[string]any{
 			"patchType": "JSONPatch",
 			"jsonPatch": map[string]any{"expression": `[JSONPatch{op: "add",
-  path: (has(object.metadata.annotations) ? "/metadata/annotations/" + jsonpatch.escapeKey("test.wireguard-operator.io/touched") : "/metadata/annotations"),
-  value: (has(object.metadata.annotations) ? dyn("true") : dyn({"test.wireguard-operator.io/touched": "true"}))}]`},
+  path: (has(object.metadata.annotations) ? "/metadata/annotations/" + jsonpatch.escapeKey("test.tunnel-operator.io/touched") : "/metadata/annotations"),
+  value: (has(object.metadata.annotations) ? dyn("true") : dyn({"test.tunnel-operator.io/touched": "true"}))}]`},
 		}},
 	}
 	binding := touchPolicy("MutatingAdmissionPolicyBinding")

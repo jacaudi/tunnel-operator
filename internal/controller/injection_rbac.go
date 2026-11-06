@@ -129,8 +129,8 @@ type ClientRoleBindingReconciler struct {
 // (see resources.ClientRoleName). kustomize does not prefix a rule's resourceNames, so the prefixed name is
 // written here. A list or watch authorized by name needs the metadata.name field selector CacheOptions sets.
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;patch;delete,resourceNames=wireguard-operator-client
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=bind,resourceNames=wireguard-operator-client
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;patch;delete,resourceNames=tunnel-operator-client
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=bind,resourceNames=tunnel-operator-client
 
 // Reconcile converges one namespace, named by req.Name.
 func (r *ClientRoleBindingReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

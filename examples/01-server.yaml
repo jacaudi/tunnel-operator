@@ -4,7 +4,7 @@ metadata:
   name: vpn
   annotations:
     # Makes this the default gateway for labelled pods. It counts only in the operator's namespace.
-    wireguard-operator.io/default: "true"
+    tunnel-operator.io/default: "true"
 spec:
   # The cluster's own networks. Clients route these over the CNI, never through the tunnel, and the
   # Service's ClusterIP must fall inside one of them. Replace each placeholder with your cluster's;

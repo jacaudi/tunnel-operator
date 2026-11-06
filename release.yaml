@@ -3,7 +3,7 @@ kind: Namespace
 metadata:
   labels:
     control-plane: controller-manager
-  name: wireguard-system
+  name: tunnel-system
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -733,20 +733,20 @@ spec:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: wireguard-controller-manager
-  namespace: wireguard-system
+  name: tunnel-controller-manager
+  namespace: tunnel-system
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: wireguard-metrics-reader
-  namespace: wireguard-system
+  name: tunnel-metrics-reader
+  namespace: tunnel-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: wireguard-leader-election-role
-  namespace: wireguard-system
+  name: tunnel-leader-election-role
+  namespace: tunnel-system
 rules:
 - apiGroups:
   - ""
@@ -783,7 +783,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: wireguard-manager-role
+  name: tunnel-manager-role
 rules:
 - apiGroups:
   - ""
@@ -802,7 +802,7 @@ rules:
 - apiGroups:
   - admissionregistration.k8s.io
   resourceNames:
-  - wireguard-operator-inject
+  - tunnel-operator-inject
   resources:
   - mutatingadmissionpolicies
   - mutatingadmissionpolicybindings
@@ -838,7 +838,7 @@ rules:
 - apiGroups:
   - rbac.authorization.k8s.io
   resourceNames:
-  - wireguard-operator-client
+  - tunnel-operator-client
   resources:
   - clusterroles
   verbs:
@@ -846,7 +846,7 @@ rules:
 - apiGroups:
   - rbac.authorization.k8s.io
   resourceNames:
-  - wireguard-operator-client
+  - tunnel-operator-client
   resources:
   - rolebindings
   verbs:
@@ -895,7 +895,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: wireguard-metrics-reader
+  name: tunnel-metrics-reader
 rules:
 - nonResourceURLs:
   - /metrics
@@ -905,7 +905,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: wireguard-operator-client
+  name: tunnel-operator-client
 rules:
 - apiGroups:
   - vpn.tunnel-operator.io
@@ -921,50 +921,50 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: wireguard-leader-election-rolebinding
-  namespace: wireguard-system
+  name: tunnel-leader-election-rolebinding
+  namespace: tunnel-system
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: wireguard-leader-election-role
+  name: tunnel-leader-election-role
 subjects:
 - kind: ServiceAccount
-  name: wireguard-controller-manager
-  namespace: wireguard-system
+  name: tunnel-controller-manager
+  namespace: tunnel-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: wireguard-manager-rolebinding
+  name: tunnel-manager-rolebinding
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: wireguard-manager-role
+  name: tunnel-manager-role
 subjects:
 - kind: ServiceAccount
-  name: wireguard-controller-manager
-  namespace: wireguard-system
+  name: tunnel-controller-manager
+  namespace: tunnel-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: wireguard-metrics-reader
+  name: tunnel-metrics-reader
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: wireguard-metrics-reader
+  name: tunnel-metrics-reader
 subjects:
 - kind: ServiceAccount
-  name: wireguard-metrics-reader
-  namespace: wireguard-system
+  name: tunnel-metrics-reader
+  namespace: tunnel-system
 ---
 apiVersion: v1
 kind: Service
 metadata:
   labels:
     control-plane: controller-manager
-  name: wireguard-controller-manager-metrics-service
-  namespace: wireguard-system
+  name: tunnel-controller-manager-metrics-service
+  namespace: tunnel-system
 spec:
   ports:
   - name: metrics
@@ -979,8 +979,8 @@ kind: Deployment
 metadata:
   labels:
     control-plane: controller-manager
-  name: wireguard-controller-manager
-  namespace: wireguard-system
+  name: tunnel-controller-manager
+  namespace: tunnel-system
 spec:
   replicas: 1
   selector:
@@ -992,7 +992,7 @@ spec:
         kubectl.kubernetes.io/default-container: manager
       labels:
         control-plane: controller-manager
-        wireguard-operator.io/component: operator
+        tunnel-operator.io/component: operator
     spec:
       containers:
       - args:
@@ -1041,14 +1041,14 @@ spec:
       securityContext:
         fsGroup: 65534
         runAsNonRoot: true
-      serviceAccountName: wireguard-controller-manager
+      serviceAccountName: tunnel-controller-manager
       terminationGracePeriodSeconds: 10
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
-  name: wireguard-operator-require-injection
-  namespace: wireguard-system
+  name: tunnel-operator-require-injection
+  namespace: tunnel-system
 spec:
   failurePolicy: Fail
   matchConstraints:
@@ -1067,17 +1067,17 @@ spec:
   - expression: has(object.spec.initContainers) && size(object.spec.initContainers)
       > 0 && object.spec.initContainers[0].name == 'wg-client' && has(object.spec.initContainers[0].restartPolicy)
       && object.spec.initContainers[0].restartPolicy == 'Always'
-    message: the pod is labelled wireguard-operator.io/enabled=true but was not injected
+    message: the pod is labelled tunnel-operator.io/enabled=true but was not injected
       with the WireGuard sidecar. Check that exactly one Wireguard in the operator's
-      namespace is annotated wireguard-operator.io/default=true, that the operator
-      is running, and that the cluster serves MutatingAdmissionPolicy (Kubernetes
-      1.34 and 1.35 need the beta enabled). The operator's log names the cause.
+      namespace is annotated tunnel-operator.io/default=true, that the operator is
+      running, and that the cluster serves MutatingAdmissionPolicy (Kubernetes 1.34
+      and 1.35 need the beta enabled). The operator's log names the cause.
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
 metadata:
-  name: wireguard-operator-require-injection
-  namespace: wireguard-system
+  name: tunnel-operator-require-injection
+  namespace: tunnel-system
 spec:
   matchResources:
     namespaceSelector:
@@ -1088,10 +1088,10 @@ spec:
         - kube-system
     objectSelector:
       matchExpressions:
-      - key: wireguard-operator.io/component
+      - key: tunnel-operator.io/component
         operator: DoesNotExist
       matchLabels:
-        wireguard-operator.io/enabled: "true"
-  policyName: wireguard-operator-require-injection
+        tunnel-operator.io/enabled: "true"
+  policyName: tunnel-operator-require-injection
   validationActions:
   - Deny

@@ -10,10 +10,10 @@ spec:
   matchResources:
     objectSelector:
       matchLabels:
-        wireguard-operator.io/enabled: "true"
+        tunnel-operator.io/enabled: "true"
       matchExpressions:
       # The gateway and operator pods are never tunnelled, whatever else they are labelled.
-      - key: wireguard-operator.io/component
+      - key: tunnel-operator.io/component
         operator: DoesNotExist
     namespaceSelector:
       matchExpressions:

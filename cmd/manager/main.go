@@ -106,7 +106,7 @@ func main() {
 		Cache:                   controllers.CacheOptions(),
 		HealthProbeBindAddress:  probeAddr,
 		LeaderElection:          enableLeaderElection,
-		LeaderElectionID:        "a6d3bffc.wireguard-operator.io",
+		LeaderElectionID:        "a6d3bffc.tunnel-operator.io",
 		LeaderElectionNamespace: leaderElectionNamespace,
 	})
 	if err != nil {

@@ -38,7 +38,7 @@ const excludedNamespace = "kube-system"
 
 // injectPolicyName names the MutatingAdmissionPolicy and its binding. It is literal, and already
 // carries the release's name prefix: the operator writes these at runtime, so kustomize never sees them.
-const injectPolicyName = "wireguard-operator-inject"
+const injectPolicyName = "tunnel-operator-inject"
 
 const (
 	admissionGroup = "admissionregistration.k8s.io"
@@ -48,7 +48,7 @@ const (
 )
 
 // defaultGateway returns the Wireguard injected sidecars attach to: the one Wireguard in operatorNS
-// annotated wireguard-operator.io/default=true. Choosing the default is therefore an act of whoever
+// annotated tunnel-operator.io/default=true. Choosing the default is therefore an act of whoever
 // controls the operator's namespace, never of a tenant who can edit a Wireguard elsewhere; such an
 // annotation is logged and ignored. Zero or several defaults is an error naming them.
 func defaultGateway(ctx context.Context, list []v1alpha1.Wireguard, operatorNS string) (types.NamespacedName, error) {
@@ -310,7 +310,7 @@ var injectionKey = types.NamespacedName{Namespace: "injection", Name: "policy"}
 
 // Only the one name the operator writes, and only the verbs it uses: it applies, then deletes, and never reads
 // these back through the API.
-// +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=mutatingadmissionpolicies;mutatingadmissionpolicybindings,verbs=create;patch;delete,resourceNames=wireguard-operator-inject
+// +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=mutatingadmissionpolicies;mutatingadmissionpolicybindings,verbs=create;patch;delete,resourceNames=tunnel-operator-inject
 
 // Reconcile applies the policy for the current default gateway, or removes it.
 func (r *InjectionPolicyReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result, error) {
