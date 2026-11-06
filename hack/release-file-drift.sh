@@ -1,11 +1,12 @@
 #!/bin/sh
 # Assert the committed release.yaml still matches what config/ renders to.
 #
-# release.yaml is this repo's documented install path — users apply it straight
-# from a tag — and it is a GENERATED file: `make generate-release-file` renders
-# it with kustomize from config/default. So it can silently fall behind the CRDs,
-# RBAC and Deployment it is supposed to ship, and nothing would say so until
-# someone installed a stale manifest.
+# release.yaml is a GENERATED file: `make generate-release-file` renders it with
+# kustomize from config/default. Its two image pins carry release-please's
+# `x-release-please-version` marker, so each release PR bumps them (see
+# release-please-config.json). So it can silently fall behind the CRDs, RBAC and
+# Deployment it is supposed to ship, and nothing would say so until someone
+# applied a stale manifest.
 #
 # This regenerates and FAILS on any diff. It never fixes the tree: a CI step that
 # mutates what it is checking hides the problem it exists to surface. Same
@@ -25,16 +26,16 @@ set -eu
 cd "$(git rev-parse --show-toplevel)"
 
 if [ ! -f release.yaml ]; then
-  echo "::error::release.yaml is missing — it is the documented install path and must be committed"
+  echo "::error::release.yaml is missing — it is a committed, generated file"
   exit 1
 fi
 
 # `- --agent-image=<ref>` inside the manager container's args.
-agent=$(sed -n 's/^[[:space:]]*- --agent-image=//p' release.yaml | head -1)
+agent=$(sed -n -e 's/ # x-release-please-version$//' -e 's/^[[:space:]]*- --agent-image=//p' release.yaml | head -1)
 # `image: <ref>` at exactly eight spaces — the manager container. The other two
 # `image:` matches in this file are CRD schema PROPERTY NAMES with no value on
 # the line, so they cannot collide.
-manager=$(sed -n 's/^        image: //p' release.yaml | head -1)
+manager=$(sed -n -e 's/ # x-release-please-version$//' -e 's/^        image: //p' release.yaml | head -1)
 
 if [ -z "${agent}" ] || [ -z "${manager}" ]; then
   echo "::error::could not read the agent/manager image pins out of release.yaml"
