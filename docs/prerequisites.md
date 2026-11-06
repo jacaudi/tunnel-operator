@@ -27,12 +27,12 @@ runtimeConfig:
 ```
 
 ```sh
-kind create cluster --config kind.yaml
+kind create cluster --config kind.yaml --image kindest/node:v1.34.11
 ```
 
 ## Pod Security `privileged`
 
-Two namespaces need it, because both run containers with `NET_ADMIN`, which Pod Security
+Two kinds of namespace need it, because both run containers with `NET_ADMIN`, which Pod Security
 `baseline` forbids:
 
 - **The gateway's namespace** — the server pod has a privileged `sysctl` init container, and its
@@ -65,11 +65,11 @@ range you leave out is tunnelled: cluster traffic to it goes to the VPN provider
 operator does **not** discover them; collect them with the commands below. Use IPv4 ranges only: in
 a dual-stack cluster, leave the IPv6 ones out.
 
-**Service range.** ServiceCIDR is GA since Kubernetes 1.33, so every supported cluster has at least
-the default object, named `kubernetes`:
+**Service range.** `ServiceCIDR` is GA since Kubernetes 1.33, so every supported cluster has at
+least the default object, named `kubernetes`; the `CIDRS` column lists the ranges:
 
 ```sh
-kubectl get servicecidr -o jsonpath='{range .items[*]}{.spec.cidrs}{"\n"}{end}'
+kubectl get servicecidr
 ```
 
 **Pod range.** When the control plane allocates node pod ranges, each node carries its slice:
@@ -93,20 +93,10 @@ kubectl get nodes -o wide
 
 ### What the operator checks
 
-A `Wireguard` whose `localCIDRs` break a rule is `Degraded`, and the operator renders no server
-Deployment for it until the spec is fixed. The condition's reason names the rule:
-
-| Rule | Reason when broken |
-|---|---|
-| At least one entry | Rejected at admission |
-| Each entry is a canonical IPv4 CIDR: IPv4, and no host bits set (`10.244.0.0/16`, not `10.244.0.1/16`) | `InvalidLocalCIDRs` |
-| No entry overlaps `peerCIDR` (default `10.8.0.0/24`) | `PeerCIDROverlapsLocalCIDRs` |
-| No entry contains `192.0.2.1`, the address the gateway's readiness check routes through the tunnel | `ProbeAddressInLocalCIDRs` |
-| The gateway Service's ClusterIP falls inside an entry, so clients reach the gateway outside the tunnel; in practice, list the Service range | `ClusterIPOutsideLocalCIDRs` |
-
-The operator does **not** check that `localCIDRs` avoid your VPN provider's tunnel range. An entry
-that overlaps it keeps that traffic off the tunnel; see
-[gluetun-egress.md](gluetun-egress.md#localcidrs).
-
-`kubectl describe wireguard <name> -n <namespace>` shows the `Degraded` condition with its reason,
-and a message that names the offending entry.
+Each entry must be a canonical IPv4 CIDR, overlap no part of `peerCIDR` and not contain `192.0.2.1`,
+and one entry must hold the gateway Service's ClusterIP, so always list the Service range. A broken
+rule sets `Degraded`, and the operator renders no server Deployment until it is fixed;
+`kubectl describe wireguard <name> -n <namespace>` shows the reason and a message naming the entry,
+or the Service and its ClusterIP. The reasons are in [crd-wireguard.md](crd-wireguard.md#spec); the
+operator does **not** check the provider's tunnel range (see
+[gluetun-egress.md](gluetun-egress.md#localcidrs)).

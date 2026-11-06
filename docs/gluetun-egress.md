@@ -88,16 +88,16 @@ nat     -A POSTROUTING -s <peerCIDR> -o tun0 -j MASQUERADE
 
 Peer traffic is masqueraded into gluetun's tunnel, never out of `eth0`. The agent re-asserts the
 routing and these rules after every state change and every 10 seconds, adding only a rule whose
-check fails, so a rule is never duplicated. When gluetun restarts, or rolls its firewall back, it
-can flush these rules, and the agent restores them within one interval. Routing keeps internet-bound
-peer traffic off `eth0` throughout, but what happens in the window depends on the cause:
+check fails, so a rule is never duplicated. gluetun can flush these rules, for example when it
+restarts or rolls its firewall back; until the agent's next pass restores them (within 10 seconds,
+or sooner on a state change), two conditions matter:
 
-- **A gluetun restart** also takes the tunnel down, so rule 102 drops peer traffic. The restart
-  costs an outage, not a leak.
-- **A firewall rollback alone** leaves the tunnel up, so the blackhole does not apply. If the
-  rollback leaves the `FORWARD` policy at `ACCEPT`, a peer packet addressed inside `localCIDRs`
-  can be forwarded out of `eth0` to a cluster network for up to 10 seconds, until the agent
-  restores `DROP`. That reaches the cluster, not the internet.
+- **While the tunnel is down** (table `51820` empty, or rule 101 absent), rule 102 blackholes
+  internet-bound peer traffic. That costs an outage, not a leak.
+- **While the `FORWARD` policy is `ACCEPT`**, as it can be after gluetun rolls its firewall back, a
+  peer packet addressed inside `localCIDRs` can be forwarded out of `eth0` to a cluster network,
+  whatever the tunnel's state. It reaches the cluster, not the internet, and only a hand-configured
+  peer sends such packets: the client sidecar routes `localCIDRs` over its own pod's `eth0`.
 
 ## Readiness follows the tunnel
 
