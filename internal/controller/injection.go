@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -308,6 +309,9 @@ func applyForced(ctx context.Context, c client.Client, obj *unstructured.Unstruc
 	return nil
 }
 
+// policyRecheck is how often a cluster that serves no MutatingAdmissionPolicy is asked again.
+const policyRecheck = 10 * time.Minute
+
 // injectionKey is the singleton reconcile key: every Wireguard event and the startup kick ask the same question.
 var injectionKey = types.NamespacedName{Namespace: "injection", Name: "policy"}
 
@@ -324,10 +328,11 @@ func (r *InjectionPolicyReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 		return ctrl.Result{}, err
 	}
 	if version == "" {
-		// Nothing served means nothing writable or deletable. The backstop refuses labelled pods.
-		log.Info("the cluster serves no MutatingAdmissionPolicy; labelled pods are rejected until it does " +
-			"(Kubernetes 1.34 and 1.35 need the beta enabled)")
-		return ctrl.Result{}, nil
+		// Nothing served means nothing writable or deletable. The backstop refuses labelled pods. Enabling the
+		// beta raises no event, so ask again later rather than wait for an operator restart.
+		log.Info("the cluster serves no MutatingAdmissionPolicy; labelled pods are rejected until it does "+
+			"(Kubernetes 1.34 and 1.35 need the beta enabled); checking again", "after", policyRecheck.String())
+		return ctrl.Result{RequeueAfter: policyRecheck}, nil
 	}
 
 	wgs := &v1alpha1.WireguardList{}

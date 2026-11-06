@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	admissionregistrationv1beta1 "k8s.io/api/admissionregistration/v1beta1"
@@ -19,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/yaml"
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/jacaudi/wireguard-operator/api/v1alpha1"
 	"github.com/jacaudi/wireguard-operator/internal/resources"
@@ -290,5 +292,20 @@ func TestServedPolicyVersion(t *testing.T) {
 				t.Errorf("servedPolicyVersion() = %q, %v, want %q, error=%v", got, err, tt.want, tt.wantErr)
 			}
 		})
+	}
+}
+
+// Enabling the MutatingAdmissionPolicy beta restarts the API server and raises no event the operator
+// watches, so a cluster that served neither version is asked again. Without it the policy would stay
+// unwritten until the operator restarted.
+func TestReconcileRequeuesWhileNoPolicyVersionIsServed(t *testing.T) {
+	r := &InjectionPolicyReconciler{Discovery: fakeGroupVersions{served: map[string][]string{}}}
+
+	got, err := r.Reconcile(t.Context(), ctrl.Request{})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if want := 10 * time.Minute; got.RequeueAfter != want {
+		t.Errorf("RequeueAfter = %v, want %v", got.RequeueAfter, want)
 	}
 }
