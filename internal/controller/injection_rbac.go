@@ -27,16 +27,15 @@ import (
 	"github.com/jacaudi/wireguard-operator/internal/resources"
 )
 
-// needsClientRoleBinding reports whether a pod of pods, all in namespace ns, is one injection applies to:
-// labelled for it, not an operator component, and not in the namespace the policies exclude. Such a pod's
+// needsClientRoleBinding reports whether a pod of pods, the labelled pods of namespace ns, is one injection
+// applies to: not an operator component, and not in the namespace the policies exclude. Such a pod's
 // sidecar needs the client ClusterRole bound in ns; nothing else does.
 func needsClientRoleBinding(ns string, pods []corev1.Pod) bool {
 	if ns == excludedNamespace {
 		return false
 	}
 	for _, p := range pods {
-		_, component := p.Labels[resources.LabelComponent]
-		if p.Labels[resources.LabelEnabled] == "true" && !component {
+		if _, component := p.Labels[resources.LabelComponent]; !component {
 			return true
 		}
 	}

@@ -96,16 +96,7 @@ func main() {
 
 	leaderElectionNamespace := leaderElectionNamespaceFlag
 	if leaderElectionNamespace == "" {
-		if ns := os.Getenv("POD_NAMESPACE"); ns != "" {
-			leaderElectionNamespace = ns
-		} else {
-			// Fallback to in-cluster serviceaccount namespace file if present
-			if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
-				if s := string(data); s != "" {
-					leaderElectionNamespace = s
-				}
-			}
-		}
+		leaderElectionNamespace = podNamespace
 	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{

@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -73,14 +73,14 @@ func defaultGateway(ctx context.Context, list []v1alpha1.Wireguard, operatorNS s
 	case 1:
 		return types.NamespacedName{Namespace: operatorNS, Name: defaults[0]}, nil
 	}
-	sort.Strings(defaults)
+	slices.Sort(defaults)
 	return types.NamespacedName{}, fmt.Errorf("%d Wireguards in namespace %s are annotated %s=true: %s",
 		len(defaults), operatorNS, resources.AnnotationDefault, strings.Join(defaults, ", "))
 }
 
 // injectedSidecar returns the client container the policy inserts as the pod's first init container, and
 // the two volumes it needs. It is the native sidecar of examples/client.yaml, which the end-to-end suite
-// has run since M5, plus a mount of the pod's own token (wg-token), which the example gets from its
+// has run for the client sidecar, plus a mount of the pod's own token (wg-token), which the example gets from its
 // ServiceAccount. A unit test holds the two equal.
 //
 // wg-token is the standard ServiceAccount volume, projected for the sidecar alone: the pod gets a token
@@ -136,11 +136,7 @@ func injectedSidecar(image, gateway string) (corev1.Container, []corev1.Volume) 
 func celLiteral(v any) string {
 	switch v := v.(type) {
 	case map[string]any:
-		keys := make([]string, 0, len(v))
-		for k := range v {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
+		keys := slices.Sorted(maps.Keys(v))
 		parts := make([]string, len(keys))
 		for i, k := range keys {
 			parts[i] = strconv.Quote(k) + ": dyn(" + celLiteral(v[k]) + ")"
@@ -199,9 +195,6 @@ func injectMatchResources() (map[string]any, error) {
 // the sidecar must come first so later init containers run inside the tunnel. When a pod has no volumes
 // or initContainers the array is created, otherwise it is appended or inserted into.
 func renderInjectPolicy(version string, sidecar corev1.Container, volumes []corev1.Volume) (policy, binding *unstructured.Unstructured, err error) {
-	if version != "v1" && version != "v1beta1" {
-		return nil, nil, fmt.Errorf("unsupported %s version %q", admissionGroup, version)
-	}
 	sidecarCEL, err := celOf(sidecar)
 	if err != nil {
 		return nil, nil, fmt.Errorf("render the sidecar: %w", err)
