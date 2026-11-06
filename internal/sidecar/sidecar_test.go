@@ -13,7 +13,7 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/jacaudi/wireguard-operator/api/v1alpha1"
+	"github.com/jacaudi/tunnel-operator/api/v1alpha1"
 )
 
 // applyCall is one Apply the fake datapath received.

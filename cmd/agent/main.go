@@ -13,11 +13,11 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/go-logr/stdr"
-	"github.com/jacaudi/wireguard-operator/internal/agent"
-	"github.com/jacaudi/wireguard-operator/internal/datapath"
-	"github.com/jacaudi/wireguard-operator/internal/resources"
-	"github.com/jacaudi/wireguard-operator/internal/sidecar"
-	"github.com/jacaudi/wireguard-operator/internal/wireguard"
+	"github.com/jacaudi/tunnel-operator/internal/agent"
+	"github.com/jacaudi/tunnel-operator/internal/datapath"
+	"github.com/jacaudi/tunnel-operator/internal/resources"
+	"github.com/jacaudi/tunnel-operator/internal/sidecar"
+	"github.com/jacaudi/tunnel-operator/internal/wireguard"
 )
 
 func main() {

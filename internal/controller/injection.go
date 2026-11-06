@@ -28,8 +28,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	"github.com/jacaudi/wireguard-operator/api/v1alpha1"
-	"github.com/jacaudi/wireguard-operator/internal/resources"
+	"github.com/jacaudi/tunnel-operator/api/v1alpha1"
+	"github.com/jacaudi/tunnel-operator/internal/resources"
 )
 
 // excludedNamespace is the one namespace no pod is injected in: the cluster's own components live there.

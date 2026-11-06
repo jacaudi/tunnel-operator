@@ -10,7 +10,7 @@ import (
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 
-	"github.com/jacaudi/wireguard-operator/internal/resources"
+	"github.com/jacaudi/tunnel-operator/internal/resources"
 )
 
 // ensureRouting installs the peerCIDR route in table 51821 and the blackhole default in table 51822 with

@@ -12,8 +12,8 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/jacaudi/wireguard-operator/api/v1alpha1"
-	"github.com/jacaudi/wireguard-operator/internal/resources"
+	"github.com/jacaudi/tunnel-operator/api/v1alpha1"
+	"github.com/jacaudi/tunnel-operator/internal/resources"
 )
 
 func newPrivateKey(t *testing.T) wgtypes.Key {

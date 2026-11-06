@@ -10,7 +10,7 @@ import (
 
 	"github.com/vishvananda/netlink"
 
-	"github.com/jacaudi/wireguard-operator/internal/resources"
+	"github.com/jacaudi/tunnel-operator/internal/resources"
 )
 
 // lookupPeerPath asks the kernel which device a packet from src arriving on wg0 for probe would leave

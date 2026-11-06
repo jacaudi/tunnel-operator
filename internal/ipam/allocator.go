@@ -22,7 +22,7 @@ import (
 	"net/netip"
 	"slices"
 
-	"github.com/jacaudi/wireguard-operator/api/v1alpha1"
+	"github.com/jacaudi/tunnel-operator/api/v1alpha1"
 	"github.com/korylprince/ipnetgen"
 )
 

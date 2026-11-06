@@ -16,7 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	"github.com/jacaudi/wireguard-operator/api/v1alpha1"
+	"github.com/jacaudi/tunnel-operator/api/v1alpha1"
 )
 
 const testPublicKey = "gVKb6hS9AgvO7m3tTfnqE4qD8YHyQq5eVYfR3l2ePH0="

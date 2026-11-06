@@ -9,7 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/jacaudi/wireguard-operator/api/v1alpha1"
+	"github.com/jacaudi/tunnel-operator/api/v1alpha1"
 )
 
 // peerAction is what the client does with the WireguardPeer named after its pod.

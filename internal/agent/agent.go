@@ -11,8 +11,8 @@ import (
 	"github.com/go-logr/logr"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/jacaudi/wireguard-operator/api/v1alpha1"
-	"github.com/jacaudi/wireguard-operator/internal/ipam"
+	"github.com/jacaudi/tunnel-operator/api/v1alpha1"
+	"github.com/jacaudi/tunnel-operator/internal/ipam"
 )
 
 type State struct {

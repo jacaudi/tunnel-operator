@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jacaudi/wireguard-operator/api/v1alpha1"
+	"github.com/jacaudi/tunnel-operator/api/v1alpha1"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	v12 "k8s.io/api/apps/v1"

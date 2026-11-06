@@ -10,8 +10,8 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	meta "k8s.io/apimachinery/pkg/api/meta"
 
-	"github.com/jacaudi/wireguard-operator/api/v1alpha1"
-	"github.com/jacaudi/wireguard-operator/internal/resources"
+	"github.com/jacaudi/tunnel-operator/api/v1alpha1"
+	"github.com/jacaudi/tunnel-operator/internal/resources"
 )
 
 // errWaiting marks a configuration the operator has not finished publishing yet.

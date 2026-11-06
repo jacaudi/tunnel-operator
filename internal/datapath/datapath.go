@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/jacaudi/wireguard-operator/internal/resources"
+	"github.com/jacaudi/tunnel-operator/internal/resources"
 )
 
 // rule is one iptables rule: its table, its chain and the match and target after the chain.
