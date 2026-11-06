@@ -90,10 +90,6 @@ func TestDesiredClientRoleBinding(t *testing.T) {
 	}
 }
 
-// The client ClusterRole's rendered name, the RoleBinding's roleRef and the manager's `bind` grant must
-// all be one string. kustomize adds the wireguard- prefix to the first, not to resourceNames in a rule,
-// so the grant carries the already-prefixed name. If any of the three drifts, the manager cannot create
-// the RoleBinding (escalation prevention) and no labelled pod can reach the apiserver.
 // releaseClusterRoles returns every ClusterRole of release.yaml.
 func releaseClusterRoles(t *testing.T) []rbacv1.ClusterRole {
 	t.Helper()
@@ -123,6 +119,10 @@ func releaseClusterRoles(t *testing.T) []rbacv1.ClusterRole {
 	}
 }
 
+// The client ClusterRole's rendered name, the RoleBinding's roleRef and the manager's `bind` grant must
+// all be one string. kustomize adds the wireguard- prefix to the first, not to resourceNames in a rule,
+// so the grant carries the already-prefixed name. If any of the three drifts, the manager cannot create
+// the RoleBinding (escalation prevention) and no labelled pod can reach the apiserver.
 func TestReleaseGrantsBindOnTheRenderedClientRole(t *testing.T) {
 	var clientRole string
 	var bindNames []string

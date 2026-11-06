@@ -130,7 +130,7 @@ var _ = BeforeSuite(func() {
 
 	// The client RoleBinding reconciler runs on a manager of its own, so a spec can stop it (the operator is
 	// down) and start another.
-	rbManager = startRoleBindingManager()
+	stopRoleBindings = startRoleBindingManager()
 
 	// envtest runs no kube-controller-manager; fakeRollout reports the operator's Deployments rolled out.
 	err = ctrl.NewControllerManagedBy(k8sManager).
@@ -149,7 +149,7 @@ var _ = BeforeSuite(func() {
 
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")
-	rbManager.stop()
+	stopRoleBindings()
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })

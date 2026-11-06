@@ -23,17 +23,13 @@ import (
 	"github.com/jacaudi/wireguard-operator/internal/resources"
 )
 
-// rbManager runs the suite's ClientRoleBindingReconciler.
-var rbManager *roleBindingManager
+// stopRoleBindings stops the manager running the suite's ClientRoleBindingReconciler.
+var stopRoleBindings func()
 
-// roleBindingManager is a manager that runs only the ClientRoleBindingReconciler, on the caches the real
-// manager uses, so a spec can stop it as if the operator were down and start another.
-type roleBindingManager struct {
-	cancel context.CancelFunc
-	done   chan struct{}
-}
-
-func startRoleBindingManager() *roleBindingManager {
+// startRoleBindingManager runs a manager with only the ClientRoleBindingReconciler, on the caches the real
+// manager uses, and returns the function that stops it: a spec stops it as if the operator were down, then
+// starts another.
+func startRoleBindingManager() (stop func()) {
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:  scheme.Scheme,
 		Cache:   CacheOptions(),
@@ -45,20 +41,19 @@ func startRoleBindingManager() *roleBindingManager {
 	Expect((&ClientRoleBindingReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr)).To(Succeed())
 
 	ctx, cancel := context.WithCancel(context.Background())
-	m := &roleBindingManager{cancel: cancel, done: make(chan struct{})}
+	done := make(chan struct{})
 	go func() {
 		defer GinkgoRecover()
-		defer close(m.done)
+		defer close(done)
 		Expect(mgr.Start(ctx)).To(Succeed())
 	}()
-	// Caches synced: from here an event or a start-up pass is acted on.
+	// Returns once the caches have synced. Whether the start-up pass has run is not promised, so the specs
+	// wait on what they expect.
 	Expect(mgr.GetCache().WaitForCacheSync(ctx)).To(BeTrue())
-	return m
-}
-
-func (m *roleBindingManager) stop() {
-	m.cancel()
-	Eventually(m.done, 30*time.Second).Should(BeClosed())
+	return func() {
+		cancel()
+		Eventually(done, 30*time.Second).Should(BeClosed())
+	}
 }
 
 var _ = Describe("client RoleBinding", func() {
@@ -134,18 +129,18 @@ var _ = Describe("client RoleBinding", func() {
 		pod := injectedPod()
 		Eventually(func() error { _, err := getBinding(); return err }, timeout, interval).Should(Succeed())
 
-		rbManager.stop()
+		stopRoleBindings()
 		restarted := false
 		defer func() {
 			if !restarted {
-				rbManager = startRoleBindingManager()
+				stopRoleBindings = startRoleBindingManager()
 			}
 		}()
 		deletePod(pod)
 		Consistently(func() error { _, err := getBinding(); return err }, 2*time.Second, interval).Should(Succeed(),
 			"with the operator down nothing removes the binding")
 
-		rbManager = startRoleBindingManager()
+		stopRoleBindings = startRoleBindingManager()
 		restarted = true
 		Eventually(func() bool { _, err := getBinding(); return apierrors.IsNotFound(err) }, timeout, interval).Should(BeTrue(),
 			"no labelled pod remains, so a restarted operator must remove the binding")
@@ -162,8 +157,10 @@ var _ = Describe("client RoleBinding", func() {
 	It("never touches a RoleBinding of that name it did not create", func() {
 		foreign := &rbacv1.RoleBinding{
 			ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: resources.ClientRoleName, Labels: map[string]string{"owner": "a-human"}},
-			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "view"},
-			Subjects:   []rbacv1.Subject{{APIGroup: rbacv1.GroupName, Kind: rbacv1.GroupKind, Name: "someone"}},
+			// The operator's own roleRef, which is immutable: a forced apply over this object can change its subjects
+			// and labels, so the spec fails if the operator ever sees it as its own or as absent.
+			RoleRef:  rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: resources.ClientRoleName},
+			Subjects: []rbacv1.Subject{{APIGroup: rbacv1.GroupName, Kind: rbacv1.GroupKind, Name: "someone"}},
 		}
 		Expect(k8sClient.Create(context.Background(), foreign)).To(Succeed())
 		before, err := getBinding()
