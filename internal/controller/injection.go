@@ -311,7 +311,9 @@ func applyForced(ctx context.Context, c client.Client, obj *unstructured.Unstruc
 // injectionKey is the singleton reconcile key: every Wireguard event and the startup kick ask the same question.
 var injectionKey = types.NamespacedName{Namespace: "injection", Name: "policy"}
 
-// +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=mutatingadmissionpolicies;mutatingadmissionpolicybindings,verbs=get;list;watch;create;patch;delete
+// Only the one name the operator writes, and only the verbs it uses: it applies, then deletes, and never reads
+// these back through the API.
+// +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=mutatingadmissionpolicies;mutatingadmissionpolicybindings,verbs=create;patch;delete,resourceNames=wireguard-operator-inject
 
 // Reconcile applies the policy for the current default gateway, or removes it.
 func (r *InjectionPolicyReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result, error) {

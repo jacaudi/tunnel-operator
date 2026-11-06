@@ -96,32 +96,41 @@ func TestDesiredClientRoleBinding(t *testing.T) {
 // all be one string. kustomize adds the wireguard- prefix to the first, not to resourceNames in a rule,
 // so the grant carries the already-prefixed name. If any of the three drifts, the manager cannot create
 // the RoleBinding (escalation prevention) and no labelled pod can reach the apiserver.
-func TestReleaseGrantsBindOnTheRenderedClientRole(t *testing.T) {
+// releaseClusterRoles returns every ClusterRole of release.yaml.
+func releaseClusterRoles(t *testing.T) []rbacv1.ClusterRole {
+	t.Helper()
 	f, err := os.Open("../../release.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer f.Close()
 
-	var clientRole string
-	var bindNames []string
+	var roles []rbacv1.ClusterRole
 	dec := yaml.NewYAMLOrJSONDecoder(f, 4096)
 	for {
 		var u unstructured.Unstructured
 		if err := dec.Decode(&u); errors.Is(err, io.EOF) {
-			break
+			return roles
 		} else if err != nil {
 			t.Fatal(err)
 		}
 		if u.GetKind() != "ClusterRole" {
 			continue
 		}
-		if u.GetName() == resources.ClientRoleName {
-			clientRole = u.GetName()
-		}
 		var role rbacv1.ClusterRole
 		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, &role); err != nil {
 			t.Fatal(err)
+		}
+		roles = append(roles, role)
+	}
+}
+
+func TestReleaseGrantsBindOnTheRenderedClientRole(t *testing.T) {
+	var clientRole string
+	var bindNames []string
+	for _, role := range releaseClusterRoles(t) {
+		if role.Name == resources.ClientRoleName {
+			clientRole = role.Name
 		}
 		for _, r := range role.Rules {
 			if slices.Contains(r.Verbs, "bind") {
@@ -137,5 +146,47 @@ func TestReleaseGrantsBindOnTheRenderedClientRole(t *testing.T) {
 	}
 	if !slices.Equal(bindNames, []string{resources.ClientRoleName}) {
 		t.Errorf("bind grants resourceNames %v, want exactly [%s]", bindNames, resources.ClientRoleName)
+	}
+}
+
+// The operator writes exactly one RoleBinding name per namespace and one policy and binding name, so its
+// grants on those resources name them: a compromised operator cannot rewrite anyone else's RoleBinding
+// or admission policy. Reads are by that name too, which is why the RoleBinding cache selects on it.
+func TestReleaseGrantsOnlyTheNamesTheOperatorManages(t *testing.T) {
+	grants := map[string][]string{} // resource -> resourceNames, across all rules naming it
+	verbs := map[string][]string{}
+	for _, role := range releaseClusterRoles(t) {
+		if role.Name != "wireguard-manager-role" {
+			continue
+		}
+		for _, r := range role.Rules {
+			for _, res := range r.Resources {
+				switch res {
+				case "rolebindings", "mutatingadmissionpolicies", "mutatingadmissionpolicybindings":
+					grants[res] = append(grants[res], r.ResourceNames...)
+					verbs[res] = append(verbs[res], r.Verbs...)
+					if len(r.ResourceNames) == 0 {
+						t.Errorf("%s is granted for every name: %+v", res, r)
+					}
+				}
+			}
+		}
+	}
+	want := map[string]string{
+		"rolebindings":                    resources.ClientRoleName,
+		"mutatingadmissionpolicies":       injectPolicyName,
+		"mutatingadmissionpolicybindings": injectPolicyName,
+	}
+	for res, name := range want {
+		if !slices.Equal(grants[res], []string{name}) {
+			t.Errorf("%s grants resourceNames %v, want exactly [%s]", res, grants[res], name)
+		}
+	}
+	for _, res := range []string{"mutatingadmissionpolicies", "mutatingadmissionpolicybindings"} {
+		for _, v := range []string{"get", "list", "watch"} {
+			if slices.Contains(verbs[res], v) {
+				t.Errorf("%s grants %s, which the operator never uses", res, v)
+			}
+		}
 	}
 }
