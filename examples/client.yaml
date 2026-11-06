@@ -3,7 +3,7 @@
 # routes the pod's internet traffic through the tunnel.
 #
 # - The namespace must allow NET_ADMIN: Pod Security level `privileged`.
-# - Replace the image tag vX.Y.Z with the operator release in use.
+# - Replace the image tag vX.Y.Z with the tag of the operator's own --agent-image.
 # - To attach to a gateway in another namespace, give the sidecar `--wireguard network/vpn`
 #   (namespace/name). Keep this ServiceAccount and RoleBinding in the pod's own namespace.
 apiVersion: v1
@@ -49,7 +49,7 @@ spec:
       initContainers:
         # This must be the first init container, so that later init containers run inside the tunnel too.
         - name: wg-client
-          image: ghcr.io/jacaudi/wireguard-operator/agent:vX.Y.Z  # replace vX.Y.Z with your operator release
+          image: ghcr.io/jacaudi/wireguard-operator/agent:vX.Y.Z  # replace vX.Y.Z: use the operator's --agent-image tag
           restartPolicy: Always
           args: ["client", "--wireguard", "vpn"]
           env:
