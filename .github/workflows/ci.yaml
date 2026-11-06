@@ -122,10 +122,10 @@ jobs:
   # forever with nothing explaining why. Both secrets are set on this repo
   # (verified: actions/secrets reports APP_ID and APP_PRIVATE_KEY).
   #
-  # The manifest is reset to 0.0.0 — via .github/release-please-manifest.json and
-  # never via `release-as`, which is a permanent override rather than a
-  # bootstrap — so release-please cuts the first release at `initial-version`
-  # 0.1.0.
+  # A 0.0.0 manifest with no matching release makes release-please cut its first
+  # release at `initial-version`. The manifest (.github/release-please-manifest.json),
+  # never `release-as` (a permanent override, not a bootstrap), is how a first
+  # version is set.
   release:
     needs: [smoke]
     if: ${{ github.ref == 'refs/heads/main' }}

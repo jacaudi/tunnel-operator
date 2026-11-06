@@ -58,10 +58,11 @@ Commits follow [Conventional Commits](https://www.conventionalcommits.org/). Exa
 
 [release-please](https://github.com/googleapis/release-please) reads the commit types on `main`
 and maintains a release PR; merging that PR tags the release. `feat:` drives a minor release and
-`fix:` a patch. A `!` or a `BREAKING CHANGE:` footer drives a **major** release, because the
-version is past `1.0.0` (see
-[`.github/release-please-manifest.json`](.github/release-please-manifest.json)). A commit without a conventional type contributes nothing to the changelog
-or the version.
+`fix:` a patch. The project is pre-1.0 and
+[`.github/release-please-config.json`](.github/release-please-config.json) sets
+`bump-minor-pre-major`, so a breaking change (`!` or a `BREAKING CHANGE:` footer) bumps the
+**minor** version until `1.0.0`. A commit without a conventional type contributes nothing to the
+changelog or the version.
 
 ## Pull requests
 
