@@ -76,7 +76,7 @@ rules:
   - patch
   - watch
 - apiGroups:
-  - vpn.wireguard-operator.io
+  - vpn.tunnel-operator.io
   resources:
   - wireguardpeers
   verbs:
@@ -84,7 +84,7 @@ rules:
   - list
   - watch
 - apiGroups:
-  - vpn.wireguard-operator.io
+  - vpn.tunnel-operator.io
   resources:
   - wireguardpeers/status
   - wireguards/status
@@ -93,7 +93,7 @@ rules:
   - patch
   - update
 - apiGroups:
-  - vpn.wireguard-operator.io
+  - vpn.tunnel-operator.io
   resources:
   - wireguards
   verbs:
@@ -105,7 +105,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - vpn.wireguard-operator.io
+  - vpn.tunnel-operator.io
   resources:
   - wireguards/finalizers
   verbs:

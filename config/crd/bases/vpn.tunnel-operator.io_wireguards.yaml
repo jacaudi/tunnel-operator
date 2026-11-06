@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.23.0
-  name: wireguards.vpn.wireguard-operator.io
+  name: wireguards.vpn.tunnel-operator.io
 spec:
-  group: vpn.wireguard-operator.io
+  group: vpn.tunnel-operator.io
   names:
     kind: Wireguard
     listKind: WireguardList

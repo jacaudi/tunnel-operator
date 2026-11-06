@@ -144,7 +144,7 @@ func TestPeerStatusMatches(t *testing.T) {
 }
 
 func TestSkipPeerWrite(t *testing.T) {
-	gr := schema.GroupResource{Group: "vpn.wireguard-operator.io", Resource: "wireguardpeers"}
+	gr := schema.GroupResource{Group: "vpn.tunnel-operator.io", Resource: "wireguardpeers"}
 	tests := []struct {
 		name string
 		err  error
@@ -529,7 +529,7 @@ func (w failingStatusWriter) Update(_ context.Context, obj client.Object, _ ...c
 }
 
 func TestAdmitPeersStatusWriteErrors(t *testing.T) {
-	gr := schema.GroupResource{Group: "vpn.wireguard-operator.io", Resource: "wireguardpeers"}
+	gr := schema.GroupResource{Group: "vpn.tunnel-operator.io", Resource: "wireguardpeers"}
 	keyless := v1alpha1.WireguardPeer{ObjectMeta: metav1.ObjectMeta{Name: "keyless", Namespace: "default"}}
 	keyed := v1alpha1.WireguardPeer{
 		ObjectMeta: metav1.ObjectMeta{Name: "keyed", Namespace: "default"},
@@ -565,7 +565,7 @@ func TestAdmitPeersStatusWriteErrors(t *testing.T) {
 }
 
 func TestMarkPeersWireguardNotFoundStatusWriteErrors(t *testing.T) {
-	gr := schema.GroupResource{Group: "vpn.wireguard-operator.io", Resource: "wireguardpeers"}
+	gr := schema.GroupResource{Group: "vpn.tunnel-operator.io", Resource: "wireguardpeers"}
 	peers := []v1alpha1.WireguardPeer{
 		{ObjectMeta: metav1.ObjectMeta{Name: "first", Namespace: "default"}, Spec: v1alpha1.WireguardPeerSpec{WireguardRef: "vpn"}},
 		{ObjectMeta: metav1.ObjectMeta{Name: "second", Namespace: "default"}, Spec: v1alpha1.WireguardPeerSpec{WireguardRef: "vpn"}},

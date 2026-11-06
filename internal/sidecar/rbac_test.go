@@ -30,7 +30,7 @@ func TestClientClusterRoleGrantsOnlyPeers(t *testing.T) {
 	}
 
 	want := []rbacv1.PolicyRule{{
-		APIGroups: []string{"vpn.wireguard-operator.io"},
+		APIGroups: []string{"vpn.tunnel-operator.io"},
 		Resources: []string{"wireguardpeers"},
 		Verbs:     []string{"create", "delete", "get", "list", "watch"},
 	}}

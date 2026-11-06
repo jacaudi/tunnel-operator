@@ -99,7 +99,7 @@ kind: Secret
 metadata: {name: gluetun-key}
 stringData: {WIREGUARD_PRIVATE_KEY: %s}
 ---
-apiVersion: vpn.wireguard-operator.io/v1alpha1
+apiVersion: vpn.tunnel-operator.io/v1alpha1
 kind: Wireguard
 metadata: {name: vpn}
 spec:
@@ -120,7 +120,7 @@ spec:
 
 // testPeerManifests returns the WireguardPeer peer20 (wireguardRef vpn, publicKey testPeerPublicKey).
 func testPeerManifests() string {
-	return fmt.Sprintf(`apiVersion: vpn.wireguard-operator.io/v1alpha1
+	return fmt.Sprintf(`apiVersion: vpn.tunnel-operator.io/v1alpha1
 kind: WireguardPeer
 metadata: {name: peer20}
 spec:

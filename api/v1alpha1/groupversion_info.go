@@ -16,7 +16,7 @@ limitations under the License.
 
 // Package v1alpha1 contains API Schema definitions for the vpn v1alpha1 API group.
 // +kubebuilder:object:generate=true
-// +groupName=vpn.wireguard-operator.io
+// +groupName=vpn.tunnel-operator.io
 package v1alpha1
 
 import (
@@ -26,7 +26,7 @@ import (
 )
 
 // GroupVersion is group version used to register these objects.
-var GroupVersion = schema.GroupVersion{Group: "vpn.wireguard-operator.io", Version: "v1alpha1"}
+var GroupVersion = schema.GroupVersion{Group: "vpn.tunnel-operator.io", Version: "v1alpha1"}
 
 var schemeBuilder = runtime.NewSchemeBuilder(addKnownTypes)
 
