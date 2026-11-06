@@ -130,10 +130,11 @@ type ClientRoleBindingReconciler struct {
 	refused sync.Map
 }
 
-// The bind grant is named for the ClusterRole as rendered in release.yaml (see resources.ClientRoleName).
-// kustomize does not prefix a rule's resourceNames, so the prefixed name is written here.
+// Every grant is named for the RoleBinding and ClusterRole the operator manages, as rendered in release.yaml
+// (see resources.ClientRoleName). kustomize does not prefix a rule's resourceNames, so the prefixed name is
+// written here. A list or watch authorized by name needs the metadata.name field selector CacheOptions sets.
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;patch;delete
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;patch;delete,resourceNames=wireguard-operator-client
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=bind,resourceNames=wireguard-operator-client
 
 // Reconcile converges one namespace, named by req.Name.

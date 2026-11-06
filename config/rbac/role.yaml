@@ -20,16 +20,15 @@ rules:
   - watch
 - apiGroups:
   - admissionregistration.k8s.io
+  resourceNames:
+  - wireguard-operator-inject
   resources:
   - mutatingadmissionpolicies
   - mutatingadmissionpolicybindings
   verbs:
   - create
   - delete
-  - get
-  - list
   - patch
-  - watch
 - apiGroups:
   - apps
   resources:
@@ -65,6 +64,8 @@ rules:
   - bind
 - apiGroups:
   - rbac.authorization.k8s.io
+  resourceNames:
+  - wireguard-operator-client
   resources:
   - rolebindings
   verbs:
