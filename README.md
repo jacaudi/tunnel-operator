@@ -1,17 +1,17 @@
 # wireguard-operator
 
-A Kubernetes operator that runs a WireGuard server inside your cluster and admits pods to it by
-public key, declaratively. It is the base of an in-cluster VPN gateway: application pods tunnel to
-the server, and the server egresses through [gluetun](https://github.com/qdm12/gluetun) to a
-commercial VPN provider. The server, peer registration, the gluetun egress and the in-pod
-client all work today.
+A Kubernetes operator that sends chosen pods' internet traffic through a commercial VPN provider,
+declaratively. Label a workload and its pods get a WireGuard client sidecar that tunnels to an
+in-cluster gateway, which egresses through [gluetun](https://github.com/qdm12/gluetun) and fails
+closed: a pod that cannot be tunnelled does not run, and traffic is dropped, never leaked, when the
+tunnel is down. Cluster traffic — DNS, Services, other pods — never enters the tunnel.
 
 This is a fork of [jodevsa/wireguard-operator](https://github.com/jodevsa/wireguard-operator) that
 trims it to an in-cluster gateway — no LoadBalancer or NodePort Service, no wstunnel, no IPv6, no
 client private keys held by the operator — and reconciles what is left with Server-Side Apply; see
 [What's changed in this fork](#whats-changed-in-this-fork).
 
-The operator is **not** a VPN for phones or laptops. The server is reachable in-cluster only,
+The operator is **not** a VPN for phones or laptops. The gateway is reachable in-cluster only,
 through a ClusterIP Service.
 
 > [!WARNING]
@@ -24,139 +24,98 @@ through a ClusterIP Service.
 
 ## What it does
 
-- **`Wireguard`** — the server. The operator generates the server key pair and keeps it in a
-  Secret, runs a single-replica Deployment with the WireGuard agent, and exposes UDP `51820`
-  through a ClusterIP Service.
-- **`WireguardPeer`** — a client, identified by its public key. The operator allocates the peer an
-  address from the server's `peerCIDR` (default `10.8.0.0/24`), and the agent adds it to the
-  server's `wg0`. The operator never sees the client's private key.
-- **Kernel or userspace WireGuard** — the agent uses the kernel module when the node has it and
-  falls back to [wireguard-go](https://github.com/WireGuard/wireguard-go) when it does not.
-- **Egress through gluetun** — the server pod forwards peer traffic into a gluetun container and
-  fails closed when the tunnel drops. See [docs/gluetun-egress.md](docs/gluetun-egress.md).
-- **Client sidecar** — a native sidecar that mints a key inside the application pod, registers it,
-  and routes the pod's internet traffic through the server. See
+- **Label-driven injection** — pods labelled `wireguard-operator.io/enabled: "true"` get the client
+  sidecar at admission and attach to the default gateway. A labelled pod that cannot be tunnelled
+  is rejected with a reason. See [docs/injection.md](docs/injection.md).
+- **`Wireguard`** — a gateway: a WireGuard server pod with a gluetun container that holds the
+  tunnel to your VPN provider. It fails closed by routing, and reads ready only when a peer's packet
+  would be forwarded into the tunnel and gluetun is healthy. See [docs/gluetun-egress.md](docs/gluetun-egress.md).
+- **`WireguardPeer`** — one client, identified by its public key, in the client's own namespace.
+  The operator allocates its address and copies the gateway's endpoint, public key and
+  `localCIDRs` into its status. The operator never sees a client's private key.
+- **Any namespace** — a gateway serves peers from every namespace unless its
+  `allowedNamespaces.from` is `Same`.
+- **The sidecar without injection** — write the same sidecar into a pod spec yourself. See
   [docs/client-sidecar.md](docs/client-sidecar.md).
-- **Sidecar injection** — label a pod template `wireguard-operator.io/enabled: "true"` and the
-  operator injects the client sidecar and attaches the pod to the cluster's default gateway; a
-  labelled pod that cannot be tunnelled is rejected, never run in the clear. See
-  [docs/injection.md](docs/injection.md).
-
-See [`docs/architecture.md`](docs/architecture.md) for how the two resources fit together.
-
-## At a glance
-
-How traffic flows from an application pod to the VPN provider:
-
-![Traffic flow: app pod with wg-client sidecar, ClusterIP Service, WireGuard server with gluetun, VPN provider, internet](docs/images/01-traffic-flow.svg)
-
-Where it runs: the operator in `wireguard-system`, and one gateway pod per `Wireguard`, in its own namespace. Clients can attach from any namespace the gateway allows; see [docs/client-sidecar.md](docs/client-sidecar.md#attaching-to-a-gateway-in-another-namespace).
-
-![Infrastructure: the operator, Wireguard and WireguardPeer resources, server pod, Service and Secret, app pods, VPN provider](docs/images/02-infrastructure.svg)
 
 ## Quick start
 
-**Prerequisites:** a Kubernetes 1.34+ cluster (with the MutatingAdmissionPolicy beta enabled on
-1.34–1.35), `kubectl` pointed at it, Go 1.26, and `wireguard-tools` for `wg` on your
-workstation. The gateway's namespace must allow privileged pods. (Full prerequisites, manager
-flags and building your own images:
-[`docs/installation.md`](docs/installation.md).)
+**Prerequisites:** Kubernetes 1.34 or later (on 1.34 and 1.35, with the `MutatingAdmissionPolicy`
+beta enabled), `kubectl`, Go 1.26 and `make`, and Pod Security `privileged` in the namespaces that
+run the gateway and tunnelled pods. Details: [docs/prerequisites.md](docs/prerequisites.md).
 
-**1. Install the operator.** Helm: not yet available. Install from source (below). Tracked in
-[#48](https://github.com/jacaudi/wireguard-operator/issues/48).
+**1. Install the operator into `network`** (Helm: not yet available):
 
 ```sh
 git clone https://github.com/jacaudi/wireguard-operator.git
 cd wireguard-operator
+make kustomize
+(cd config/default && ../../bin/kustomize edit set namespace network)
 make deploy IMG=ghcr.io/jacaudi/wireguard-operator/manager:latest
+kubectl label namespace network pod-security.kubernetes.io/enforce=privileged
+kubectl -n network rollout status deployment/wireguard-controller-manager
 ```
 
-`make deploy` requires `IMG`, the manager image, and has no default for it. The agent image is set
-separately, to `ghcr.io/jacaudi/wireguard-operator/agent:latest`, in
-[`config/default/manager_args_patch.yaml`](config/default/manager_args_patch.yaml). Both `latest`
-tags are built from `main`; no release is published yet. The operator runs in the `wireguard-system`
-namespace:
+**2. Create the default gateway.** Edit [`examples/01-server.yaml`](examples/01-server.yaml): set
+`localCIDRs` to your cluster's networks ([how to find them](docs/prerequisites.md#localcidrs)) and
+put your provider's gluetun variables in its `vpn-provider` Secret. The file carries the
+`wireguard-operator.io/default: "true"` annotation, which counts only in the operator's namespace:
 
 ```sh
-kubectl -n wireguard-system rollout status deployment/wireguard-controller-manager
+kubectl -n network apply -f examples/01-server.yaml
+kubectl -n network get wireguard vpn    # STATUS: ready once gluetun has connected
 ```
 
-**2. Create a gateway** ([`examples/01-server.yaml`](examples/01-server.yaml)). Apply this and the
-peer below with `kubectl apply -f`, in the same namespace:
-
-```yaml
-apiVersion: vpn.wireguard-operator.io/v1alpha1
-kind: Wireguard
-metadata:
-  name: vpn
-spec:
-  localCIDRs:
-    - 10.244.0.0/16    # pod CIDR: replace with your cluster's pod CIDR
-    - 10.96.0.0/12     # Service CIDR: replace with your cluster's Service CIDR
-    - 192.168.0.0/24   # node CIDR: replace with the CIDR your nodes live in
-  gluetun:
-    envFrom:
-      - secretRef:
-          name: vpn-provider
-```
-
-The Secret `vpn-provider` must exist and hold your provider's gluetun variables; the example file
-creates it with placeholders to replace.
-
-**3. Register a peer.** Each peer generates its own key and registers only the public half:
+**3. Label a workload.** Here, a Deployment in `default`:
 
 ```sh
-wg genkey | tee peer.key | wg pubkey
+kubectl label namespace default pod-security.kubernetes.io/enforce=privileged
+kubectl -n default patch deployment <name> \
+  -p '{"spec":{"template":{"metadata":{"labels":{"wireguard-operator.io/enabled":"true"}}}}}'
 ```
 
-```yaml
-apiVersion: vpn.wireguard-operator.io/v1alpha1
-kind: WireguardPeer
-metadata:
-  name: peer1
-spec:
-  wireguardRef: vpn
-  publicKey: "<public key>"  # the output of wg pubkey above
-```
+The patch rolls the Deployment, and each new pod starts with the `wg-client` sidecar. Without a
+workload of your own, apply [`examples/injected-client.yaml`](examples/injected-client.yaml).
 
-To attach an application pod, apply `examples/client.yaml` (see
-[Client sidecar](docs/client-sidecar.md)). For a client that is not a pod, keep `peer.key` and
-configure WireGuard yourself with the values in
-[Client sidecar — Without the sidecar](docs/client-sidecar.md#without-the-sidecar).
-
-**4. Check status.**
+**4. Check.**
 
 ```sh
-kubectl get wireguard vpn                                         # STATUS: ready once gluetun is connected to your provider
-kubectl get wireguardpeer peer1                                   # STATUS: ready
-kubectl get wireguardpeer peer1 -o jsonpath='{.status.address}'   # the peer's tunnel address
+kubectl get wireguardpeer -A    # one peer per tunnelled pod, STATUS ready
 ```
 
-The peer reads `ready` within a few reconciles, and the server once gluetun has connected. A peer without a `publicKey` stays `pending` with the
-`PublicKeyMissing` condition.
+The [walkthrough](docs/walkthrough.md) runs these steps with a check at each, shows a pod's exit IP,
+shows a labelled pod being refused, and cleans up.
 
 ## How it works
 
-One manager, one agent image, and one pod per server. The manager reconciles the CRDs into
-ordinary Kubernetes objects; the agent inside the server pod turns a JSON state file into a
-configured `wg0`.
+How traffic flows from a labelled pod to the VPN provider:
 
-- **Manager** — watches `Wireguard` and `WireguardPeer`. For each `Wireguard` it applies the
-  Service and Deployment with Server-Side Apply, creates the key Secret once, allocates peer
-  addresses, and writes the desired server state into that Secret as `state.json`.
-- **Server pod** — a privileged `sysctl` init container enables IPv4 forwarding, then the `agent`
-  container (with `NET_ADMIN`) creates `wg0`, takes the first host of `peerCIDR` as its address,
-  and listens on UDP `51820`. A `gluetun` container beside it holds the tunnel to your VPN
-  provider, and peer traffic egresses only through that tunnel.
-- **Agent** — watches the mounted `state.json` and adds, updates or removes peers by public key,
-  each with its `/32` as `AllowedIPs`. Its `/health` endpoint backs the pod's readiness probe.
-- **Peer identity** — a peer is its public key. The private key stays wherever the client
-  generated it; the operator neither mints nor stores it.
+![Traffic flow: a labelled pod's injected wg-client sidecar tunnels its internet traffic over UDP 51820, through the gateway's ClusterIP Service, to the WireGuard server, which forwards it into gluetun and out through the VPN provider; cluster DNS, pods, Services and nodes stay local, and a blackhole route, gluetun's firewall and the client's routes fail closed](docs/images/01-traffic-flow.svg)
+
+Where it runs: the operator and its default gateway in `network`, a labelled workload in `default`:
+
+![Infrastructure: the operator in network writes the injection policy, reconciles the Wireguard and its WireguardPeers, and applies the gateway's Secret, Service and server pod; each labelled pod in default runs an injected wg-client sidecar that registers its own WireguardPeer and tunnels to the gateway, which egresses through the VPN provider](docs/images/02-infrastructure.svg)
+
+- **Manager** — reconciles each `Wireguard` into a key Secret, a ClusterIP Service on UDP `51820`
+  and a single-replica server Deployment, allocates peer addresses, and writes the server's desired
+  state into the Secret. It also writes the injection policy for the default gateway, and a client
+  `RoleBinding` in each namespace with labelled pods.
+- **Admission** — the API server injects the sidecar from the operator's `MutatingAdmissionPolicy`;
+  a static `ValidatingAdmissionPolicy` rejects a labelled pod that was not injected. No webhook.
+- **Server pod** — the `agent` runs `wg0` (kernel WireGuard, or wireguard-go when the module is
+  missing) and keeps it in step with the state; `gluetun` holds the provider tunnel; peer traffic
+  leaves only through it.
+- **Client sidecar** — mints its key in the pod's memory, registers its pod as a `WireguardPeer`,
+  configures `wg0` from the peer's status, and routes everything outside `localCIDRs` into it.
+
+[docs/architecture.md](docs/architecture.md) has the detail.
 
 ## What's changed in this fork
 
 Beyond the upstream project, this fork:
 
+- **Adds the egress gateway** — gluetun egress that fails closed, the client sidecar, label-driven
+  injection, and peers that attach from other namespaces.
 - **Removes external-client exposure** — the Service is always ClusterIP; `serviceType`, `port`,
   `address`, `externalAddress` and `serviceAnnotations` are gone, and so is wstunnel.
 - **Removes operator-held client keys** — peers bring their own `publicKey`; the operator no
@@ -166,9 +125,9 @@ Beyond the upstream project, this fork:
   pod's whole `nat` and `filter` tables on every peer change.
 - **Reconciles with Server-Side Apply** — the Service and Deployment converge on every reconcile,
   with field ownership migrated from the upstream manager.
-- **Publishes its own images and releases** — `ghcr.io/jacaudi/wireguard-operator/{manager,agent}`,
-  the Go module `github.com/jacaudi/wireguard-operator`, and **automated releases**
-  (release-please → SemVer tags and changelog).
+- **Publishes its own images** — `ghcr.io/jacaudi/wireguard-operator/{manager,agent}`, built from
+  the Go module `github.com/jacaudi/wireguard-operator`, with release automation (release-please →
+  SemVer tags and changelog). No release is published yet.
 
 Coming from upstream? Read [docs/upgrading-from-upstream.md](docs/upgrading-from-upstream.md).
 
@@ -176,10 +135,9 @@ Coming from upstream? Read [docs/upgrading-from-upstream.md](docs/upgrading-from
 
 Full docs live in [`docs/`](docs/):
 
-- [Installation](docs/installation.md) · [Architecture](docs/architecture.md)
-- [`Wireguard`](docs/crd-wireguard.md) · [`WireguardPeer`](docs/crd-wireguardpeer.md) references
-- [Gluetun egress](docs/gluetun-egress.md)
-- [Client sidecar](docs/client-sidecar.md)
+- [Prerequisites](docs/prerequisites.md) · [Installation](docs/installation.md) · [Walkthrough](docs/walkthrough.md)
+- [Sidecar injection](docs/injection.md) · [Client sidecar](docs/client-sidecar.md) · [Gluetun egress](docs/gluetun-egress.md)
+- [Architecture](docs/architecture.md) · [`Wireguard`](docs/crd-wireguard.md) · [`WireguardPeer`](docs/crd-wireguardpeer.md) references
 - [Upgrading from upstream](docs/upgrading-from-upstream.md) · [Examples](examples/)
 
 ## Acknowledgements
