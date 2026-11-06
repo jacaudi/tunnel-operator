@@ -18,7 +18,7 @@ New here? Start with the [Quick start in the root README](../README.md#quick-sta
 | [Gluetun egress](gluetun-egress.md) | Server egress through a gluetun container: configuration, `localCIDRs`, fail-closed routing, readiness |
 | [Sidecar injection](injection.md) | Label a pod and the operator injects the sidecar: the default gateway, the admission policies, rejections, uninstall cleanup |
 | [Client sidecar](client-sidecar.md) | The in-pod WireGuard client: what it does, routing, the startup check, writing it into a pod spec yourself, troubleshooting |
-| [Upgrading from upstream](upgrading-from-upstream.md) | What this fork removed from jodevsa/wireguard-operator and what to do instead |
+| [Upgrading from upstream](upgrading-from-upstream.md) | Migrating from jodevsa/wireguard-operator side by side: install this fork alongside it, then re-create objects under the new group |
 | [Examples](../examples/) | Runnable sample manifests |
 
 ## What's implemented
