@@ -3,6 +3,7 @@
   "separate-pull-requests": false,
   "bump-minor-pre-major": true,
   "bootstrap-sha": "7cda258fdbed2232e1a3fe8383ad7330f597dd90",
+  "initial-version": "0.1.0",
   "pull-request-title-pattern": "chore: release ${version}",
   "include-component-in-tag": false,
   "changelog-sections": [
