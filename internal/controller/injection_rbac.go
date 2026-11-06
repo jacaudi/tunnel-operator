@@ -10,10 +10,13 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -55,6 +58,19 @@ const (
 	actionRefuse
 )
 
+// String names the action for logs and test failures.
+func (a roleBindingAction) String() string {
+	switch a {
+	case actionApply:
+		return "apply"
+	case actionDelete:
+		return "delete"
+	case actionRefuse:
+		return "refuse"
+	}
+	return "none"
+}
+
 // clientRoleBindingAction decides from whether the binding is needed and what already holds its name
 // (nil when nothing does). It touches only a RoleBinding the operator labelled managed-by itself, never
 // a user's object of the same name.
@@ -84,6 +100,19 @@ func desiredClientRoleBinding(ns string) *rbacv1.RoleBinding {
 		RoleRef:  rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: resources.ClientRoleName},
 		Subjects: []rbacv1.Subject{{APIGroup: rbacv1.GroupName, Kind: rbacv1.GroupKind, Name: "system:serviceaccounts:" + ns}},
 	}
+}
+
+// CacheOptions is what the manager caches. Pods: only those labelled for injection, so the operator never
+// holds the cluster's other pods in memory. That filter applies to every cached Pod read, which is why the
+// gateway-pod lookup in WireguardReconciler reads through the API reader instead. RoleBindings: only the
+// one name the operator manages.
+func CacheOptions() cache.Options {
+	return cache.Options{ByObject: map[client.Object]cache.ByObject{
+		&corev1.Pod{}: {Label: labels.SelectorFromSet(labels.Set{resources.LabelEnabled: "true"})},
+		// By name, never by the managed-by label: a foreign RoleBinding holding the name must stay visible, so
+		// the reconciler can see it and refuse.
+		&rbacv1.RoleBinding{}: {Field: fields.OneTermEqualSelector("metadata.name", resources.ClientRoleName)},
+	}}
 }
 
 // ClientRoleBindingReconciler gives the client ClusterRole to the pods that need it: it creates the
@@ -126,6 +155,11 @@ func (r *ClientRoleBindingReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, fmt.Errorf("get RoleBinding %s/%s: %w", ns, resources.ClientRoleName, err)
 	}
 
+	// Forget a refusal once nothing foreign holds the name, so a later one is logged again.
+	if existing == nil || existing.Labels[resources.LabelManagedBy] == resources.ManagedByValue {
+		r.refused.Delete(ns)
+	}
+
 	switch clientRoleBindingAction(needsClientRoleBinding(ns, pods.Items), existing) {
 	case actionApply:
 		u, err := runtime.DefaultUnstructuredConverter.ToUnstructured(desiredClientRoleBinding(ns))
@@ -134,7 +168,8 @@ func (r *ClientRoleBindingReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}
 		return ctrl.Result{}, applyForced(ctx, r.Client, &unstructured.Unstructured{Object: u})
 	case actionDelete:
-		if err := r.Delete(ctx, existing); client.IgnoreNotFound(err) != nil {
+		// Pinned to the UID read, so a binding recreated by someone else in between is never deleted.
+		if err := r.Delete(ctx, existing, client.Preconditions{UID: &existing.UID}); client.IgnoreNotFound(err) != nil {
 			return ctrl.Result{}, fmt.Errorf("delete RoleBinding %s/%s: %w", ns, resources.ClientRoleName, err)
 		}
 	case actionRefuse:
@@ -147,8 +182,8 @@ func (r *ClientRoleBindingReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	return ctrl.Result{}, nil
 }
 
-// SetupWithManager reconciles a namespace when a labelled pod is created or deleted in it. A pod update
-// never changes whether the namespace needs the binding, so updates are ignored.
+// SetupWithManager reconciles a namespace when a labelled pod is created or deleted in it (a pod update
+// never changes whether the namespace needs the binding) and on any change to its client RoleBinding.
 func (r *ClientRoleBindingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("client-rolebinding").
@@ -157,5 +192,11 @@ func (r *ClientRoleBindingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: pod.GetNamespace()}}}
 			}),
 			builder.WithPredicates(predicate.Funcs{UpdateFunc: func(event.UpdateEvent) bool { return false }})).
+		// A RoleBinding is watched too, so a deleted one comes back while pods need it, and a binding left by a
+		// pod deleted while the operator was down is removed at start-up: its create event reaches the
+		// same pass.
+		Watches(&rbacv1.RoleBinding{}, handler.EnqueueRequestsFromMapFunc(func(_ context.Context, rb client.Object) []reconcile.Request {
+			return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: rb.GetNamespace()}}}
+		})).
 		Complete(r)
 }

@@ -25,18 +25,14 @@ import (
 	"time"
 
 	vpnv1alpha1 "github.com/jacaudi/wireguard-operator/api/v1alpha1"
-	"github.com/jacaudi/wireguard-operator/internal/resources"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -108,9 +104,7 @@ var _ = BeforeSuite(func() {
 	// nothing else, so a spec that reads an unlabelled pod through it fails here as it would in a cluster.
 	k8sManager, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme: scheme.Scheme,
-		Cache: cache.Options{ByObject: map[client.Object]cache.ByObject{
-			&corev1.Pod{}: {Label: labels.SelectorFromSet(labels.Set{resources.LabelEnabled: "true"})},
-		}},
+		Cache:  CacheOptions(),
 	})
 	Expect(err).ToNot(HaveOccurred())
 
@@ -134,8 +128,9 @@ var _ = BeforeSuite(func() {
 	}).SetupWithManager(k8sManager)
 	Expect(err).ToNot(HaveOccurred())
 
-	err = (&ClientRoleBindingReconciler{Client: k8sManager.GetClient()}).SetupWithManager(k8sManager)
-	Expect(err).ToNot(HaveOccurred())
+	// The client RoleBinding reconciler runs on a manager of its own, so a spec can stop it (the operator is
+	// down) and start another.
+	rbManager = startRoleBindingManager()
 
 	// envtest runs no kube-controller-manager; fakeRollout reports the operator's Deployments rolled out.
 	err = ctrl.NewControllerManagedBy(k8sManager).
@@ -154,6 +149,7 @@ var _ = BeforeSuite(func() {
 
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")
+	rbManager.stop()
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })
