@@ -10,9 +10,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.23.0
-  name: wireguardpeers.vpn.wireguard-operator.io
+  name: wireguardpeers.vpn.tunnel-operator.io
 spec:
-  group: vpn.wireguard-operator.io
+  group: vpn.tunnel-operator.io
   names:
     kind: WireguardPeer
     listKind: WireguardPeerList
@@ -183,9 +183,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.23.0
-  name: wireguards.vpn.wireguard-operator.io
+  name: wireguards.vpn.tunnel-operator.io
 spec:
-  group: vpn.wireguard-operator.io
+  group: vpn.tunnel-operator.io
   names:
     kind: Wireguard
     listKind: WireguardList
@@ -857,7 +857,7 @@ rules:
   - patch
   - watch
 - apiGroups:
-  - vpn.wireguard-operator.io
+  - vpn.tunnel-operator.io
   resources:
   - wireguardpeers
   verbs:
@@ -865,7 +865,7 @@ rules:
   - list
   - watch
 - apiGroups:
-  - vpn.wireguard-operator.io
+  - vpn.tunnel-operator.io
   resources:
   - wireguardpeers/status
   - wireguards/status
@@ -874,7 +874,7 @@ rules:
   - patch
   - update
 - apiGroups:
-  - vpn.wireguard-operator.io
+  - vpn.tunnel-operator.io
   resources:
   - wireguards
   verbs:
@@ -886,7 +886,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - vpn.wireguard-operator.io
+  - vpn.tunnel-operator.io
   resources:
   - wireguards/finalizers
   verbs:
@@ -908,7 +908,7 @@ metadata:
   name: wireguard-operator-client
 rules:
 - apiGroups:
-  - vpn.wireguard-operator.io
+  - vpn.tunnel-operator.io
   resources:
   - wireguardpeers
   verbs:

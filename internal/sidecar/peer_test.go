@@ -265,7 +265,7 @@ func TestEnsurePeerRefuses(t *testing.T) {
 
 func TestEnsurePeerIgnoresAlreadyExists(t *testing.T) {
 	exists := func() error {
-		return apierrors.NewAlreadyExists(schema.GroupResource{Group: "vpn.wireguard-operator.io", Resource: "wireguardpeers"}, "app-1")
+		return apierrors.NewAlreadyExists(schema.GroupResource{Group: "vpn.tunnel-operator.io", Resource: "wireguardpeers"}, "app-1")
 	}
 	c, _ := newClient(t, exists)
 

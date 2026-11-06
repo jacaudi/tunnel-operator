@@ -13,7 +13,7 @@ import (
 // publicKeyPattern returns the pattern the generated CRD puts on spec.publicKey.
 func publicKeyPattern(t *testing.T) *regexp.Regexp {
 	t.Helper()
-	raw, err := os.ReadFile("../../config/crd/bases/vpn.wireguard-operator.io_wireguardpeers.yaml")
+	raw, err := os.ReadFile("../../config/crd/bases/vpn.tunnel-operator.io_wireguardpeers.yaml")
 	if err != nil {
 		t.Fatalf("read CRD: %v", err)
 	}
