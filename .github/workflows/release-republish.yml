@@ -24,8 +24,8 @@
 # smoke a second shape, which is real work with no incident asking for it yet.
 # To repair the agent by hand:
 #   docker buildx imagetools create \
-#     -t ghcr.io/jacaudi/wireguard-operator/agent:vX.Y.Z \
-#     ghcr.io/jacaudi/wireguard-operator/agent:sha-<short>
+#     -t ghcr.io/jacaudi/tunnel-operator/agent:vX.Y.Z \
+#     ghcr.io/jacaudi/tunnel-operator/agent:sha-<short>
 name: release-republish
 
 on:
@@ -65,7 +65,7 @@ jobs:
       APP_ID: ${{ secrets.APP_ID }}
       # The SAME name ci.yaml gives ci-build and ci-retag. Hardcoded, this job
       # repaired a repository the pipeline never publishes to.
-      IMAGE: ghcr.io/jacaudi/wireguard-operator/manager
+      IMAGE: ghcr.io/jacaudi/tunnel-operator/manager
     steps:
       - name: Resolve the tag to its commit
         id: commit
@@ -150,7 +150,7 @@ jobs:
     with:
       version: ${{ inputs.tag }}
       ref: ${{ inputs.tag }}
-      image: ghcr.io/jacaudi/wireguard-operator/manager
+      image: ghcr.io/jacaudi/tunnel-operator/manager
       # REQUIRED HERE TOO. Neither image sits at its build context root, so
       # without this the rebuild path fails with "no Dockerfile or Containerfile
       # in ." — and it would fail during an incident, which is the worst moment

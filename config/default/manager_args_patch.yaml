@@ -12,6 +12,6 @@ spec:
         - "--health-probe-bind-address=:8081"
         - "--metrics-bind-address=:8080"
         - "--leader-elect"
-        - "--agent-image=ghcr.io/jacaudi/wireguard-operator/agent:latest"
+        - "--agent-image=ghcr.io/jacaudi/tunnel-operator/agent:latest"
 
 
