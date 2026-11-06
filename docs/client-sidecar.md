@@ -94,7 +94,7 @@ and the RoleBinding. The init container needs these fields:
 | `securityContext.capabilities.add: [NET_ADMIN]` | Creates `wg0` and changes the pod's routes. |
 | A memory-backed `emptyDir` mounted at `/var/run/wireguard` | Holds the key in memory. It survives a container restart and is gone with the pod. |
 | `startupProbe` running `agent client --check` | Holds the application containers until the tunnel is up and the routes are in place. `periodSeconds: 2` and `failureThreshold: 90` give it 180 seconds; if the check has not passed by then, the kubelet restarts the sidecar. |
-| A `serviceAccountName` bound to `wireguard-operator-client` | Lets the sidecar create and read its own peer. See [Prerequisites](#prerequisites). |
+| A `serviceAccountName` bound to `tunnel-operator-client` | Lets the sidecar create and read its own peer. See [Prerequisites](#prerequisites). |
 
 There is no liveness or readiness probe. The sidecar only configures: the kernel keeps the tunnel
 and the routes running without the process, so a hung sidecar leaks nothing. The kubelet restarts
@@ -142,7 +142,7 @@ gateway routes only its own peers.
 - **Consent is the gateway's.** A `Wireguard` admits every namespace unless its
   `spec.allowedNamespaces.from` is `Same`; a peer from another namespace then reads
   `NamespaceNotAllowed` and the sidecar keeps waiting. See [`Wireguard`](crd-wireguard.md#spec).
-- **RBAC stays in the pod's namespace.** Bind `wireguard-operator-client` there, as in
+- **RBAC stays in the pod's namespace.** Bind `tunnel-operator-client` there, as in
   [Prerequisites](#prerequisites). The gateway's namespace needs no binding for these pods.
 - **`localCIDRs` come from the gateway.** A pod in another namespace keeps the gateway's
   `localCIDRs` off the tunnel, so they must cover the cluster ranges the pod uses.
@@ -152,7 +152,7 @@ gateway routes only its own peers.
 The cluster-wide ones, including Pod Security `privileged` in the application's namespace, are in
 [prerequisites.md](prerequisites.md). A hand-written sidecar also needs:
 
-- **A RoleBinding to `wireguard-operator-client`.** The ClusterRole grants nothing until it is
+- **A RoleBinding to `tunnel-operator-client`.** The ClusterRole grants nothing until it is
   bound. In the application's namespace, bind it to the pod's ServiceAccount:
 
   ```yaml
@@ -163,7 +163,7 @@ The cluster-wide ones, including Pod Security `privileged` in the application's 
   roleRef:
     apiGroup: rbac.authorization.k8s.io
     kind: ClusterRole
-    name: wireguard-operator-client
+    name: tunnel-operator-client
   subjects:
     - kind: ServiceAccount
       name: vpn-client
@@ -192,7 +192,7 @@ The sidecar logs to stderr. Start with `kubectl logs <pod> -c wg-client`.
 - **A missing RoleBinding.** The sidecar logs nothing of its own. Its log shows client-go
   `failed to list … forbidden` lines, the startup probe keeps failing, and the kubelet restarts the
   sidecar, so the application containers never start. Create the RoleBinding to
-  `wireguard-operator-client`, as in [Prerequisites](#prerequisites).
+  `tunnel-operator-client`, as in [Prerequisites](#prerequisites).
 - **The startup probe fails with a handshake message.** The tunnel is configured but the server is
   not answering. Check that the `Wireguard` reads `ready` and that its server pod is running.
 

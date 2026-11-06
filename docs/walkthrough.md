@@ -9,8 +9,8 @@ the config there), an account with a VPN provider that [gluetun supports](https:
 over WireGuard, and a clone of this repository as your working directory:
 
 ```sh
-git clone https://github.com/jacaudi/wireguard-operator.git
-cd wireguard-operator
+git clone https://github.com/jacaudi/tunnel-operator.git
+cd tunnel-operator
 ```
 
 ## 1. Install the operator into `network`
@@ -18,9 +18,9 @@ cd wireguard-operator
 ```sh
 make kustomize
 (cd config/default && ../../bin/kustomize edit set namespace network)
-make deploy IMG=ghcr.io/jacaudi/wireguard-operator/manager:latest
+make deploy IMG=ghcr.io/jacaudi/tunnel-operator/manager:latest
 kubectl label namespace network pod-security.kubernetes.io/enforce=privileged --overwrite
-kubectl -n network rollout status deployment/wireguard-controller-manager
+kubectl -n network rollout status deployment/tunnel-controller-manager
 ```
 
 > **`make undeploy` deletes the install namespace and everything in it.** If `network` already holds
@@ -30,7 +30,7 @@ The install already refuses labelled pods, before any gateway exists: the backst
 with it.
 
 ```sh
-kubectl get validatingadmissionpolicy wireguard-operator-require-injection
+kubectl get validatingadmissionpolicy tunnel-operator-require-injection
 ```
 
 ## 2. Create the default gateway
@@ -51,7 +51,7 @@ Then edit the copy:
   `SERVER_COUNTRIES`). Leave the variables in
   [crd-wireguard.md](crd-wireguard.md#reserved-gluetun-variables) out; the operator sets them.
 
-The file carries `wireguard-operator.io/default: "true"`, so applied in `network` it becomes the
+The file carries `tunnel-operator.io/default: "true"`, so applied in `network` it becomes the
 gateway injected pods attach to. Apply it and wait until gluetun has connected to your provider:
 
 ```sh
@@ -63,13 +63,13 @@ If it reads `error` instead, `kubectl -n network describe wireguard vpn` names t
 often a `localCIDRs` entry. The operator now writes the injection policy:
 
 ```sh
-kubectl get mutatingadmissionpolicy wireguard-operator-inject
+kubectl get mutatingadmissionpolicy tunnel-operator-inject
 ```
 
 ## 3. Label a workload
 
 [`examples/injected-client.yaml`](../examples/injected-client.yaml) is a plain Deployment, `app`,
-whose pod template carries only the label `wireguard-operator.io/enabled: "true"`. Its container is
+whose pod template carries only the label `tunnel-operator.io/enabled: "true"`. Its container is
 `curl`, kept running so you can test from it.
 
 ```sh
@@ -113,16 +113,16 @@ pod then cannot be injected, and the backstop refuses it. A server-side dry run 
 without creating anything:
 
 ```sh
-kubectl -n network annotate wireguard vpn wireguard-operator.io/default-
-kubectl wait --for=delete mutatingadmissionpolicy/wireguard-operator-inject --timeout=1m
+kubectl -n network annotate wireguard vpn tunnel-operator.io/default-
+kubectl wait --for=delete mutatingadmissionpolicy/tunnel-operator-inject --timeout=1m
 kubectl -n default run refused --image=curlimages/curl:8.17.0 \
-  --labels=wireguard-operator.io/enabled=true --dry-run=server -- true
+  --labels=tunnel-operator.io/enabled=true --dry-run=server -- true
 ```
 
 ```text
-... the pod is labelled wireguard-operator.io/enabled=true but was not injected with the WireGuard
+... the pod is labelled tunnel-operator.io/enabled=true but was not injected with the WireGuard
 sidecar. Check that exactly one Wireguard in the operator's namespace is annotated
-wireguard-operator.io/default=true, that the operator is running, and that the cluster serves
+tunnel-operator.io/default=true, that the operator is running, and that the cluster serves
 MutatingAdmissionPolicy (Kubernetes 1.34 and 1.35 need the beta enabled). The operator's log names
 the cause.
 ```
@@ -132,8 +132,8 @@ and re-run it. The running `app` pod is not touched: the policies act only when 
 Restore the annotation, and the operator writes the policy again:
 
 ```sh
-kubectl -n network annotate wireguard vpn wireguard-operator.io/default=true
-kubectl get mutatingadmissionpolicy wireguard-operator-inject
+kubectl -n network annotate wireguard vpn tunnel-operator.io/default=true
+kubectl get mutatingadmissionpolicy tunnel-operator-inject
 ```
 
 The other refusals are listed in [injection.md](injection.md#rejections).
@@ -145,7 +145,7 @@ kubectl -n default delete -f examples/injected-client.yaml
 kubectl label namespace default pod-security.kubernetes.io/enforce-
 make undeploy
 kubectl delete mutatingadmissionpolicy,mutatingadmissionpolicybinding,rolebinding -A \
-  -l app.kubernetes.io/managed-by=wireguard-operator
+  -l app.kubernetes.io/managed-by=tunnel-operator
 git restore config/default/kustomization.yaml config/manager/kustomization.yaml
 rm ~/vpn-gateway.yaml
 ```

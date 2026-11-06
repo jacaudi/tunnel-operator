@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in wireguard-operator. This document covers the conventions that the
+Thanks for your interest in tunnel-operator. This document covers the conventions that the
 release tooling and CI depend on, and the engineering practices every change follows.
 
 ## Before you start
@@ -9,7 +9,7 @@ release tooling and CI depend on, and the engineering practices every change fol
   specs and implementation plans are working documents kept outside this repository, so the issue
   thread is where design intent gets shared — ask there if the reasoning behind an area is not
   obvious from the code. Open work is tracked under
-  [#37](https://github.com/jacaudi/wireguard-operator/issues/37).
+  [#37](https://github.com/jacaudi/tunnel-operator/issues/37).
 - The project is built with [Kubebuilder](https://github.com/kubernetes-sigs/kubebuilder); read
   about that first if it is new to you.
 
@@ -30,8 +30,8 @@ and still reports success.
 The kind tier runs the operator in a real cluster. Build the two images, then run the suite:
 
 ```sh
-make docker-build-integration-test MANAGER_IMAGE=wireguard-operator/manager:test AGENT_IMAGE=wireguard-operator/agent:test
-make run-e2e MANAGER_IMAGE=wireguard-operator/manager:test AGENT_IMAGE=wireguard-operator/agent:test
+make docker-build-integration-test MANAGER_IMAGE=tunnel-operator/manager:test AGENT_IMAGE=tunnel-operator/agent:test
+make run-e2e MANAGER_IMAGE=tunnel-operator/manager:test AGENT_IMAGE=tunnel-operator/agent:test
 ```
 
 The tier needs Docker and `kubectl`. It creates a kind cluster named `wg-kind-test` and deletes it

@@ -2,7 +2,7 @@
 
 A client of a [`Wireguard`](crd-wireguard.md) server, identified by its public key. The operator
 allocates the peer an address and the server's agent adds it to `wg0`. **Namespaced**, group
-`vpn.wireguard-operator.io`, version `v1alpha1`, no short name. `kubectl get wireguardpeer` prints
+`vpn.tunnel-operator.io`, version `v1alpha1`, no short name. `kubectl get wireguardpeer` prints
 `STATUS` (`.status.status`) and `AGE`.
 
 Source of truth: [`api/v1alpha1/wireguardpeer_types.go`](../api/v1alpha1/wireguardpeer_types.go).

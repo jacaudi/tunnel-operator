@@ -1,7 +1,7 @@
 # `Wireguard` reference
 
 The server. One `Wireguard` yields one WireGuard server pod, its key Secret and a ClusterIP
-Service, all in the CR's namespace. **Namespaced**, group `vpn.wireguard-operator.io`, version
+Service, all in the CR's namespace. **Namespaced**, group `vpn.tunnel-operator.io`, version
 `v1alpha1`, no short name. `kubectl get wireguard` prints `STATUS` (`.status.status`) and `AGE`.
 
 Source of truth: [`api/v1alpha1/wireguard_types.go`](../api/v1alpha1/wireguard_types.go). See
@@ -76,7 +76,7 @@ and are deleted with it.
 ## Lifecycle notes
 
 - **A default gateway is chosen by annotation, in the operator's namespace only.** A `Wireguard`
-  annotated `wireguard-operator.io/default: "true"` is the gateway that injected sidecars attach to,
+  annotated `tunnel-operator.io/default: "true"` is the gateway that injected sidecars attach to,
   but only when it is in the namespace the operator runs in; the annotation anywhere else is ignored.
   Exactly one such `Wireguard` must exist for injection to run. See
   [injection.md](injection.md#the-default-gateway).
@@ -101,7 +101,7 @@ and are deleted with it.
   ownerReference to their `Wireguard` and are not deleted with it. Peers created by an earlier
   version keep theirs.
 - **Server-Side Apply.** The operator applies the Service and Deployment as field manager
-  `wireguard-operator`. Fields it renders converge on every reconcile; fields it does not render,
+  `tunnel-operator`. Fields it renders converge on every reconcile; fields it does not render,
   such as the Service's allocated `clusterIP`, are left alone.
 - **Egress goes through gluetun, and fails closed.** Peer traffic leaves the pod only through
   gluetun's tunnel; see [gluetun-egress.md](gluetun-egress.md).

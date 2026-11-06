@@ -8,10 +8,10 @@ attach an application pod to it, one with the sidecar written out and one that t
 
 | File | What it shows |
 |---|---|
-| [`01-server.yaml`](01-server.yaml) | `Wireguard` named `vpn`, annotated `wireguard-operator.io/default: "true"` (the default gateway when it is in the operator's namespace), with the required `localCIDRs` (pod, Service and node placeholders) and `gluetun.envFrom` a Secret, plus that `vpn-provider` Secret with placeholder gluetun variables for a WireGuard provider; the defaults apply otherwise (`peerCIDR` `10.8.0.0/24`, ClusterIP Service on UDP `51820`) |
+| [`01-server.yaml`](01-server.yaml) | `Wireguard` named `vpn`, annotated `tunnel-operator.io/default: "true"` (the default gateway when it is in the operator's namespace), with the required `localCIDRs` (pod, Service and node placeholders) and `gluetun.envFrom` a Secret, plus that `vpn-provider` Secret with placeholder gluetun variables for a WireGuard provider; the defaults apply otherwise (`peerCIDR` `10.8.0.0/24`, ClusterIP Service on UDP `51820`) |
 | [`02-peer.yaml`](02-peer.yaml) | `WireguardPeer` that references `vpn` and registers a client's public key; the operator fills in `status.address` |
-| [`client.yaml`](client.yaml) | A `Deployment` whose pod runs the client sidecar, with its `ServiceAccount` and the `RoleBinding` to `wireguard-operator-client`; the sidecar registers its own peer, so no `WireguardPeer` is applied for it |
-| [`injected-client.yaml`](injected-client.yaml) | A `Deployment` with no sidecar block, only the `wireguard-operator.io/enabled: "true"` label on its pod template; the operator injects the sidecar and attaches it to the default gateway (see [../docs/injection.md](../docs/injection.md)) |
+| [`client.yaml`](client.yaml) | A `Deployment` whose pod runs the client sidecar, with its `ServiceAccount` and the `RoleBinding` to `tunnel-operator-client`; the sidecar registers its own peer, so no `WireguardPeer` is applied for it |
+| [`injected-client.yaml`](injected-client.yaml) | A `Deployment` with no sidecar block, only the `tunnel-operator.io/enabled: "true"` label on its pod template; the operator injects the sidecar and attaches it to the default gateway (see [../docs/injection.md](../docs/injection.md)) |
 
 ## Reading order
 
