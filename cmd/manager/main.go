@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"cmp"
 	"errors"
 	"flag"
 	"fmt"
@@ -94,10 +95,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	leaderElectionNamespace := leaderElectionNamespaceFlag
-	if leaderElectionNamespace == "" {
-		leaderElectionNamespace = podNamespace
-	}
+	leaderElectionNamespace := cmp.Or(leaderElectionNamespaceFlag, podNamespace)
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
