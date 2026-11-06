@@ -68,16 +68,14 @@ the reason.
 
 ## Prerequisites
 
-- **Kubernetes 1.34 or later.** On 1.34 and 1.35 the API server must serve the
-  `MutatingAdmissionPolicy` beta; see [installation](installation.md#prerequisites). On 1.36 and
-  later it is GA and on by default. The operator writes `admissionregistration.k8s.io/v1` when the
-  cluster serves it, else `v1beta1`. When neither is served it writes nothing and logs that, and the
-  backstop rejects labelled pods. It asks again every ten minutes, so enabling the beta later is picked
-  up without restarting the operator.
-- **Pod Security `privileged` in the workload's namespace.** Pod Security evaluates the mutated pod,
-  and the sidecar needs `NET_ADMIN`. The operator never relaxes Pod Security; you set the namespace
-  label.
-- **A pod that is not `hostNetwork`.** The sidecar refuses a pod in the host network, and so does
+Kubernetes 1.34 or later with `MutatingAdmissionPolicy` served, and Pod Security `privileged` in the
+workload's namespace: see [prerequisites.md](prerequisites.md). Two details matter for injection:
+
+- **The policy version follows the cluster.** The operator writes
+  `admissionregistration.k8s.io/v1` when the cluster serves it, else `v1beta1`. When neither is
+  served it writes nothing and logs that, and the backstop rejects labelled pods. It asks again every
+  ten minutes, so enabling the beta later is picked up without restarting the operator.
+- **No `hostNetwork`.** The sidecar refuses a pod in the host network, and so does
   the backstop.
 
 ## What gets injected

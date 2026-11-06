@@ -1,12 +1,14 @@
 # Client sidecar
 
-The client sidecar is the WireGuard client for an application pod. You add one init container with
+The client sidecar is the WireGuard client for an application pod: one init container with
 `restartPolicy: Always` — a native sidecar — as the **first** init container of the pod. It runs
 the agent image as `agent client`, registers the pod with a [`Wireguard`](crd-wireguard.md) server
-and routes the pod's internet traffic through the tunnel to the gateway. The operator injects
-nothing into a pod that is not labelled, and there is no webhook. [`examples/client.yaml`](../examples/client.yaml)
-is a complete Deployment. To have the operator inject the block for you instead, label the pod
-(see [injection.md](injection.md)).
+and routes the pod's internet traffic through the tunnel to the gateway.
+
+Label the pod and the operator injects the sidecar for you (see [injection.md](injection.md)).
+This page describes what the sidecar does, and how to write it into a pod spec yourself when the
+pod is not labelled; [`examples/client.yaml`](../examples/client.yaml) is a complete Deployment
+that does.
 
 ## What it does
 
@@ -147,10 +149,9 @@ gateway routes only its own peers.
 
 ## Prerequisites
 
-- **Native sidecars.** A Kubernetes version that supports init containers with
-  `restartPolicy: Always` (on by default from 1.29).
-- **Pod Security `privileged`** in the application's namespace, because the sidecar needs
-  `NET_ADMIN`. Label the namespace `pod-security.kubernetes.io/enforce: privileged`.
+The cluster-wide ones, including Pod Security `privileged` in the application's namespace, are in
+[prerequisites.md](prerequisites.md). A hand-written sidecar also needs:
+
 - **A RoleBinding to `wireguard-operator-client`.** The ClusterRole grants nothing until it is
   bound. In the application's namespace, bind it to the pod's ServiceAccount:
 
@@ -170,9 +171,6 @@ gateway routes only its own peers.
 
   The role grants `create get list watch delete` on `wireguardpeers` and nothing else. The sidecar
   never reads the `Wireguard`, so a pod needs no access to it, in any namespace.
-- **`localCIDRs` that cover the pod, Service and node CIDRs** on the `Wireguard`, plus
-  `169.254.20.10/32` if you use NodeLocal DNSCache. See [`localCIDRs`](gluetun-egress.md#localcidrs).
-  Anything outside them goes into the tunnel.
 
 ## Troubleshooting
 
