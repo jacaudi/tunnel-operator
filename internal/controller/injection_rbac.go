@@ -117,10 +117,6 @@ func CacheOptions() cache.Options {
 // ClientRoleBindingReconciler gives the client ClusterRole to the pods that need it: it creates the
 // RoleBinding in a namespace when its first labelled pod appears and deletes it after the last is gone,
 // so no RBAC lingers in a namespace that no longer has labelled pods.
-//
-// Its Pod reads go through the manager's cache, which cmd/manager filters to labelled pods: it never
-// holds the cluster's other pods in memory. That filter applies to every cached Pod read, which is why the
-// gateway-pod lookup in WireguardReconciler reads through the API reader instead.
 type ClientRoleBindingReconciler struct {
 	client.Client
 
@@ -155,12 +151,13 @@ func (r *ClientRoleBindingReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, fmt.Errorf("get RoleBinding %s/%s: %w", ns, resources.ClientRoleName, err)
 	}
 
-	// Forget a refusal once nothing foreign holds the name, so a later one is logged again.
-	if existing == nil || existing.Labels[resources.LabelManagedBy] == resources.ManagedByValue {
+	action := clientRoleBindingAction(needsClientRoleBinding(ns, pods.Items), existing)
+	// Forget a refusal once the operator is no longer refusing, so a later one is logged again.
+	if action != actionRefuse {
 		r.refused.Delete(ns)
 	}
 
-	switch clientRoleBindingAction(needsClientRoleBinding(ns, pods.Items), existing) {
+	switch action {
 	case actionApply:
 		u, err := runtime.DefaultUnstructuredConverter.ToUnstructured(desiredClientRoleBinding(ns))
 		if err != nil {
