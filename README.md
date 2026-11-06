@@ -10,6 +10,7 @@ This is a fork of [jodevsa/wireguard-operator](https://github.com/jodevsa/wiregu
 trims it to an in-cluster gateway — no LoadBalancer or NodePort Service, no wstunnel, no IPv6, no
 client private keys held by the operator — and reconciles what is left with Server-Side Apply; see
 [What's changed in this fork](#whats-changed-in-this-fork).
+Versions restart at v0.1.0; the fork began from upstream v2.11.0 (commit `7cda258`).
 
 The operator is **not** a VPN for phones or laptops. The gateway is reachable in-cluster only,
 through a ClusterIP Service.
