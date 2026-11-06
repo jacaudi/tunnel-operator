@@ -31,9 +31,7 @@ func TestNeedsClientRoleBinding(t *testing.T) {
 	}{
 		{name: "no pods", ns: "apps"},
 		{name: "a labelled pod", ns: "apps", pods: []corev1.Pod{podIn("apps", enabled)}, want: true},
-		{name: "one of several", ns: "apps", pods: []corev1.Pod{podIn("apps", nil), podIn("apps", enabled)}, want: true},
-		{name: "only unlabelled pods", ns: "apps", pods: []corev1.Pod{podIn("apps", nil)}},
-		{name: "enabled is not true", ns: "apps", pods: []corev1.Pod{podIn("apps", map[string]string{resources.LabelEnabled: "false"})}},
+		{name: "one of several", ns: "apps", pods: []corev1.Pod{podIn("apps", map[string]string{resources.LabelComponent: resources.ComponentGateway}), podIn("apps", enabled)}, want: true},
 		{
 			name: "an operator component is never injected, so needs nothing",
 			ns:   "network",

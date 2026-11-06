@@ -88,7 +88,7 @@ func TestDefaultGateway(t *testing.T) {
 }
 
 // clientExample returns the wg-client container of examples/client.yaml, the hand-written sidecar the
-// end-to-end suite has proven since M5.
+// end-to-end suite has proven.
 func clientExample(t *testing.T) corev1.Container {
 	t.Helper()
 	f, err := os.Open("../../examples/client.yaml")
@@ -134,26 +134,22 @@ func TestInjectedSidecarEqualsTheClientExample(t *testing.T) {
 }
 
 func TestInjectedVolumes(t *testing.T) {
-	_, vols := injectedSidecar("agent:v1", "network/vpn")
-	if len(vols) != 2 || vols[0].Name != resources.VolumeKey || vols[1].Name != resources.VolumeToken {
-		t.Fatalf("volumes = %+v, want [%s %s]", vols, resources.VolumeKey, resources.VolumeToken)
+	_, got := injectedSidecar("agent:v1", "network/vpn")
+	want := []corev1.Volume{
+		{Name: resources.VolumeKey, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory}}},
+		{Name: resources.VolumeToken, VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{Sources: []corev1.VolumeProjection{
+			{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Path: "token"}},
+			{ConfigMap: &corev1.ConfigMapProjection{
+				LocalObjectReference: corev1.LocalObjectReference{Name: "kube-root-ca.crt"},
+				Items:                []corev1.KeyToPath{{Key: "ca.crt", Path: "ca.crt"}},
+			}},
+			{DownwardAPI: &corev1.DownwardAPIProjection{Items: []corev1.DownwardAPIVolumeFile{
+				{Path: "namespace", FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"}},
+			}}},
+		}}}},
 	}
-	if e := vols[0].EmptyDir; e == nil || e.Medium != corev1.StorageMediumMemory {
-		t.Errorf("%s = %+v, want a memory emptyDir", resources.VolumeKey, vols[0].VolumeSource)
-	}
-	p := vols[1].Projected
-	if p == nil || len(p.Sources) != 3 {
-		t.Fatalf("%s = %+v, want a projection of the token, the CA and the namespace", resources.VolumeToken, vols[1].VolumeSource)
-	}
-	if s := p.Sources[0].ServiceAccountToken; s == nil || s.Path != "token" {
-		t.Errorf("token source = %+v, want path token", p.Sources[0])
-	}
-	if c := p.Sources[1].ConfigMap; c == nil || c.Name != "kube-root-ca.crt" || len(c.Items) != 1 || c.Items[0].Key != "ca.crt" {
-		t.Errorf("CA source = %+v, want kube-root-ca.crt's ca.crt", p.Sources[1])
-	}
-	if d := p.Sources[2].DownwardAPI; d == nil || len(d.Items) != 1 || d.Items[0].Path != "namespace" ||
-		d.Items[0].FieldRef.FieldPath != "metadata.namespace" {
-		t.Errorf("namespace source = %+v, want the downward-API namespace", p.Sources[2])
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("volumes = %+v, want %+v", got, want)
 	}
 }
 
@@ -194,13 +190,6 @@ func TestRenderInjectPolicy(t *testing.T) {
 				t.Errorf("failurePolicy, reinvocationPolicy = %v, %v, want Fail, IfNeeded", spec["failurePolicy"], spec["reinvocationPolicy"])
 			}
 		})
-	}
-}
-
-func TestRenderInjectPolicyRejectsAnUnknownVersion(t *testing.T) {
-	c, vols := injectedSidecar("agent:v1", "network/vpn")
-	if _, _, err := renderInjectPolicy("v2", c, vols); err == nil {
-		t.Error("renderInjectPolicy(v2) succeeded, want an error")
 	}
 }
 

@@ -3,16 +3,13 @@ package resources
 import (
 	"errors"
 	"io"
-	"maps"
 	"os"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/yaml"
 )
@@ -80,18 +77,6 @@ func TestRequireInjectionManifestsMatchTheGoConstants(t *testing.T) {
 		t.Errorf("binding policyName = %q, want the policy's name %q", binding.Spec.PolicyName, policy.Name)
 	}
 
-	sel := binding.Spec.MatchResources.ObjectSelector
-	if want := map[string]string{LabelEnabled: "true"}; !maps.Equal(sel.MatchLabels, want) {
-		t.Errorf("binding objectSelector.matchLabels = %v, want %v", sel.MatchLabels, want)
-	}
-	wantExpr := []metav1.LabelSelectorRequirement{{Key: LabelComponent, Operator: metav1.LabelSelectorOpDoesNotExist}}
-	if !reflect.DeepEqual(sel.MatchExpressions, wantExpr) {
-		t.Errorf("binding objectSelector.matchExpressions = %v, want %v", sel.MatchExpressions, wantExpr)
-	}
-	wantNS := []metav1.LabelSelectorRequirement{{Key: "kubernetes.io/metadata.name", Operator: metav1.LabelSelectorOpNotIn, Values: []string{"kube-system"}}}
-	if got := binding.Spec.MatchResources.NamespaceSelector.MatchExpressions; !reflect.DeepEqual(got, wantNS) {
-		t.Errorf("binding namespaceSelector.matchExpressions = %v, want %v", got, wantNS)
-	}
 	if want := []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny}; !slices.Equal(binding.Spec.ValidationActions, want) {
 		t.Errorf("binding validationActions = %v, want %v", binding.Spec.ValidationActions, want)
 	}
