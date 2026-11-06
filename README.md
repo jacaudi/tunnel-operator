@@ -1,4 +1,4 @@
-# wireguard-operator
+# tunnel-operator
 
 A Kubernetes operator that sends chosen pods' internet traffic through a commercial VPN provider,
 declaratively. Label a workload and its pods get a WireGuard client sidecar that tunnels to an
@@ -25,7 +25,7 @@ through a ClusterIP Service.
 
 ## What it does
 
-- **Label-driven injection** — pods labelled `wireguard-operator.io/enabled: "true"` get the client
+- **Label-driven injection** — pods labelled `tunnel-operator.io/enabled: "true"` get the client
   sidecar at admission and attach to the default gateway. A labelled pod that cannot be injected,
   or uses the host network, is rejected with a reason; one in a namespace the gateway refuses is
   admitted and waits in its startup probe. See [docs/injection.md](docs/injection.md).
@@ -49,13 +49,13 @@ run the gateway and tunnelled pods. Details: [docs/prerequisites.md](docs/prereq
 **1. Install the operator into `network`** (Helm: not yet available):
 
 ```sh
-git clone https://github.com/jacaudi/wireguard-operator.git
-cd wireguard-operator
+git clone https://github.com/jacaudi/tunnel-operator.git
+cd tunnel-operator
 make kustomize
 (cd config/default && ../../bin/kustomize edit set namespace network)
-make deploy IMG=ghcr.io/jacaudi/wireguard-operator/manager:latest
+make deploy IMG=ghcr.io/jacaudi/tunnel-operator/manager:latest
 kubectl label namespace network pod-security.kubernetes.io/enforce=privileged --overwrite
-kubectl -n network rollout status deployment/wireguard-controller-manager
+kubectl -n network rollout status deployment/tunnel-controller-manager
 ```
 
 > **`make undeploy` deletes the install namespace and everything in it.** If `network` already holds
@@ -66,7 +66,7 @@ kubectl -n network rollout status deployment/wireguard-controller-manager
 clone, so your provider key never sits in it (`cp examples/01-server.yaml ~/vpn-gateway.yaml`). Set
 `localCIDRs` to your cluster's networks ([how to find them](docs/prerequisites.md#localcidrs)) and
 put your provider's gluetun variables in its `vpn-provider` Secret. The file carries the
-`wireguard-operator.io/default: "true"` annotation, which counts only in the operator's namespace:
+`tunnel-operator.io/default: "true"` annotation, which counts only in the operator's namespace:
 
 ```sh
 kubectl -n network apply -f ~/vpn-gateway.yaml
@@ -78,7 +78,7 @@ kubectl -n network get wireguard vpn    # STATUS: ready once gluetun has connect
 ```sh
 kubectl label namespace default pod-security.kubernetes.io/enforce=privileged --overwrite
 kubectl -n default patch deployment <name> \
-  -p '{"spec":{"template":{"metadata":{"labels":{"wireguard-operator.io/enabled":"true"}}}}}'
+  -p '{"spec":{"template":{"metadata":{"labels":{"tunnel-operator.io/enabled":"true"}}}}}'
 ```
 
 The patch rolls the Deployment, and each new pod starts with the `wg-client` sidecar. Without a
@@ -132,8 +132,8 @@ Beyond the upstream project, this fork:
   pod's whole `nat` and `filter` tables on every peer change.
 - **Reconciles with Server-Side Apply** — the Service and Deployment converge on every reconcile,
   with field ownership migrated from the upstream manager.
-- **Publishes its own images** — `ghcr.io/jacaudi/wireguard-operator/{manager,agent}`, built from
-  the Go module `github.com/jacaudi/wireguard-operator`, with release automation (release-please →
+- **Publishes its own images** — `ghcr.io/jacaudi/tunnel-operator/{manager,agent}`, built from
+  the Go module `github.com/jacaudi/tunnel-operator`, with release automation (release-please →
   SemVer tags and changelog). No release is published yet.
 
 Coming from upstream? Read [docs/upgrading-from-upstream.md](docs/upgrading-from-upstream.md).

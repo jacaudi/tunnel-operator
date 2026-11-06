@@ -5,22 +5,22 @@ Check the [prerequisites](prerequisites.md) first.
 ## Install from source
 
 ```sh
-git clone https://github.com/jacaudi/wireguard-operator.git
-cd wireguard-operator
-make deploy IMG=ghcr.io/jacaudi/wireguard-operator/manager:latest
+git clone https://github.com/jacaudi/tunnel-operator.git
+cd tunnel-operator
+make deploy IMG=ghcr.io/jacaudi/tunnel-operator/manager:latest
 ```
 
 **`IMG` is required.** It is the manager image, and the [`Makefile`](../Makefile) defines no
 default for it. `make deploy` writes it into
 [`config/manager/kustomization.yaml`](../config/manager/kustomization.yaml), then applies
 `config/default` — the CRDs, RBAC, the manager and the injection backstop
-(`ValidatingAdmissionPolicy` `wireguard-operator-require-injection`) — to the `wireguard-system`
-namespace, with every name prefixed `wireguard-`.
+(`ValidatingAdmissionPolicy` `tunnel-operator-require-injection`) — to the `tunnel-system`
+namespace, with every name prefixed `tunnel-`.
 
 The agent image is not `IMG`. The manager takes it as `--agent-image` and uses it for every server
 pod and every injected sidecar;
 [`config/default/manager_args_patch.yaml`](../config/default/manager_args_patch.yaml) sets it to
-`ghcr.io/jacaudi/wireguard-operator/agent:latest`.
+`ghcr.io/jacaudi/tunnel-operator/agent:latest`.
 
 CI publishes both images from `main` as `:latest` and `:sha-<short>`. No release is published yet,
 so there is no `:v<version>` image to pin; use a `:sha-<short>` tag for anything you want to keep
@@ -32,7 +32,7 @@ stable.
 Check that the manager is up:
 
 ```sh
-kubectl -n wireguard-system rollout status deployment/wireguard-controller-manager
+kubectl -n tunnel-system rollout status deployment/tunnel-controller-manager
 ```
 
 ### Install into another namespace
@@ -43,8 +43,8 @@ kubectl -n wireguard-system rollout status deployment/wireguard-controller-manag
 ```sh
 make kustomize
 (cd config/default && ../../bin/kustomize edit set namespace network)
-make deploy IMG=ghcr.io/jacaudi/wireguard-operator/manager:latest
-kubectl -n network rollout status deployment/wireguard-controller-manager
+make deploy IMG=ghcr.io/jacaudi/tunnel-operator/manager:latest
+kubectl -n network rollout status deployment/tunnel-controller-manager
 ```
 
 > **`make undeploy` deletes the install namespace and everything in it**, because `config/default`
@@ -63,8 +63,8 @@ Set both image variables, build, push to a registry your cluster pulls from, wri
 into the manager's arguments, then deploy:
 
 ```sh
-export AGENT_IMAGE=<registry>/wireguard-operator/agent:dev
-export MANAGER_IMAGE=<registry>/wireguard-operator/manager:dev
+export AGENT_IMAGE=<registry>/tunnel-operator/agent:dev
+export MANAGER_IMAGE=<registry>/tunnel-operator/manager:dev
 
 make docker-build-agent docker-build-manager
 docker push "$AGENT_IMAGE"
@@ -87,7 +87,7 @@ instead. The manager also requires `POD_NAMESPACE`, the namespace it treats as i
 
 ```sh
 make install
-POD_NAMESPACE=wireguard-system go run ./cmd/manager/main.go --agent-image=ghcr.io/jacaudi/wireguard-operator/agent:latest
+POD_NAMESPACE=tunnel-system go run ./cmd/manager/main.go --agent-image=ghcr.io/jacaudi/tunnel-operator/agent:latest
 ```
 
 ## Install with Helm (OCI)
@@ -104,7 +104,7 @@ Source of truth: [`cmd/manager/main.go`](../cmd/manager/main.go). `config/defaul
 |---|---|---|
 | `--agent-image` | — | **Required.** Image for the server pod's `agent` and `sysctl` containers, and for the client sidecar the operator injects into labelled pods. Without it the manager exits at startup. |
 | `--agent-image-pull-policy` | `IfNotPresent` | Pull policy for those two server-pod containers. The injected sidecar sets none. |
-| `--leader-elect` | `false` | Enable leader election (lease `a6d3bffc.wireguard-operator.io`). |
+| `--leader-elect` | `false` | Enable leader election (lease `a6d3bffc.tunnel-operator.io`). |
 | `--leader-election-namespace` | `""` | Namespace for the lease. Empty → `POD_NAMESPACE`, which the manager requires. |
 | `--metrics-bind-address` | `:8080` | Metrics endpoint, behind Kubernetes authentication and authorization. |
 | `--health-probe-bind-address` | `:8081` | `/healthz` and `/readyz`. |
@@ -139,5 +139,5 @@ that had labelled pods. Remove them with:
 
 ```sh
 kubectl delete mutatingadmissionpolicy,mutatingadmissionpolicybinding,rolebinding -A \
-  -l app.kubernetes.io/managed-by=wireguard-operator
+  -l app.kubernetes.io/managed-by=tunnel-operator
 ```

@@ -1,12 +1,42 @@
 # Upgrading from upstream
 
 This fork diverges from [jodevsa/wireguard-operator](https://github.com/jodevsa/wireguard-operator)
-at `v2.11.0`. It keeps the API group (`vpn.wireguard-operator.io`), the version (`v1alpha1`) and
-both kinds, and changes the schema in place. Upstream served clients outside the cluster; this
-fork serves pods inside it, so most of what was removed has no replacement.
+at `v2.11.0`. It keeps the version (`v1alpha1`) and both kinds, but serves them under its own
+group, `vpn.tunnel-operator.io` (upstream's is `vpn.wireguard-operator.io`), with a changed schema.
+Upstream served clients outside the cluster; this fork serves pods inside it. You migrate side by
+side, not in place.
 
-> **One operator per cluster.** Both operators install the same two CRDs, so they cannot run side
-> by side. Remove upstream before you install this fork.
+## Migrating side by side
+
+1. **Install this fork alongside upstream.** The two do not collide: the CRD groups differ, every
+   cluster-scoped name this fork installs carries the `tunnel-` prefix, and the leader-election
+   leases differ. Follow [installation.md](installation.md); it applies to the `tunnel-system`
+   namespace by default.
+2. **Create the new `Wireguard`** under `vpn.tunnel-operator.io/v1alpha1`. Never give it the same
+   name in the same namespace as an upstream one: both operators derive `<name>-dep`, `<name>-svc`
+   and the Secret `<name>` from it and set a controller `ownerReference` on them, so they would
+   fight over the same objects. Create it in the operator's own namespace, where it can be the
+   default gateway, and pick a new name if upstream's server already lives there. The fields are in
+   [crd-wireguard.md](crd-wireguard.md#spec) and [`examples/01-server.yaml`](../examples/01-server.yaml).
+3. **Do not carry over keys or peers.** Upstream's peers are clients outside the cluster, and this
+   fork has no external endpoint. Pods attach through the sidecar or the label and make their own
+   keys, so there is nothing to translate.
+4. **Remove upstream**, the way you installed it: `helm uninstall`, or `kubectl delete -f` its
+   `release.yaml`. If its CRDs survive, delete them:
+
+   ```sh
+   kubectl delete crd wireguards.vpn.wireguard-operator.io wireguardpeers.vpn.wireguard-operator.io
+   ```
+
+   > **Deleting upstream's CRDs deletes upstream's objects.** Every remaining upstream `Wireguard`
+   > and `WireguardPeer` goes with them. Do it only once nothing depends on them.
+
+Both CRDs share their kind, plural and singular, so `kubectl get wireguard` silently picks one
+group. Name the group in every command: `wireguards.vpn.tunnel-operator.io` or
+`wireguards.vpn.wireguard-operator.io`, and `wireguardpeers.vpn.tunnel-operator.io` or
+`wireguardpeers.vpn.wireguard-operator.io`.
+
+The tables below are the reference for translating an upstream server spec into this fork's.
 
 ## Removed from `Wireguard`
 
@@ -26,8 +56,8 @@ fork serves pods inside it, so most of what was removed has no replacement.
 
 ## Added to `Wireguard`
 
-`Wireguard` now requires `spec.localCIDRs` and `spec.gluetun`, so a `spec: {}` server must gain
-both before upgrading. See [crd-wireguard.md](crd-wireguard.md#spec) and
+`Wireguard` now requires `spec.localCIDRs` and `spec.gluetun`, so when you translate a server
+spec, a `spec: {}` server must gain both. See [crd-wireguard.md](crd-wireguard.md#spec) and
 [`examples/01-server.yaml`](../examples/01-server.yaml).
 
 ## Removed from `WireguardPeer`
@@ -55,36 +85,5 @@ both before upgrading. See [crd-wireguard.md](crd-wireguard.md#spec) and
 - **The OLM bundle and the webhook server.** The bundle was never published, and the webhook
   server had no handler registered.
 
-## What still carries over
-
-- **Object names.** The server key Secret `<wireguard>`, its keys `privateKey` and `publicKey`,
-  the Service `<wireguard>-svc` and the Deployment `<wireguard>-dep` keep upstream's names.
-- **Peer public keys and addresses.** `spec.publicKey` keeps its meaning, so a peer upstream keyed
-  for you keeps its key, as long as you still hold the private half from its rendered
-  configuration. The peer address is no longer a spec field: the operator allocates each peer a
-  fresh `status.address`, so a peer's address can change.
-
-## Moving an install
-
-This fork has not tested an in-place upgrade over a running upstream install. Treat it as a new
-install:
-
-1. Save what you need: each `Wireguard` and `WireguardPeer` manifest and, for each client you keep,
-   its private key from the `<wireguard>-peer-configs` Secret.
-2. Uninstall upstream the way you installed it (`helm uninstall`, or `kubectl delete -f` its
-   `release.yaml`). If its CRDs survive, delete them, which also deletes every remaining
-   `Wireguard` and `WireguardPeer`:
-
-   ```sh
-   kubectl delete crd wireguards.vpn.wireguard-operator.io wireguardpeers.vpn.wireguard-operator.io
-   ```
-
-3. Install this fork — see [installation.md](installation.md).
-4. Recreate each `Wireguard` with only the fields in [crd-wireguard.md](crd-wireguard.md#spec), and
-   each `WireguardPeer` with `wireguardRef` and `publicKey` only. The operator allocates each peer
-   an address afresh, so read it from `status.address` and update the client's `[Interface] Address`.
-5. The server gets a new key pair. Update every client's `[Peer] PublicKey`, and point its
-   `Endpoint` at the new Service's cluster IP.
-
-The Go module is now `github.com/jacaudi/wireguard-operator`, and the images are
-`ghcr.io/jacaudi/wireguard-operator/manager` and `ghcr.io/jacaudi/wireguard-operator/agent`.
+The Go module is `github.com/jacaudi/tunnel-operator`, and the images are
+`ghcr.io/jacaudi/tunnel-operator/manager` and `ghcr.io/jacaudi/tunnel-operator/agent`.

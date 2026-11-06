@@ -1,4 +1,4 @@
-# wireguard-operator documentation
+# tunnel-operator documentation
 
 A Kubernetes operator that sends labelled pods' internet traffic through a commercial VPN provider:
 an injected WireGuard sidecar tunnels each pod to an in-cluster gateway that egresses through
@@ -40,7 +40,7 @@ New here? Start with the [Quick start in the root README](../README.md#quick-sta
 - **Cross-namespace attachment** — a peer names a `Wireguard` in another namespace with
   `wireguardNamespace`, and the gateway admits or refuses that namespace through
   `allowedNamespaces`. See [client-sidecar.md](client-sidecar.md#attaching-to-a-gateway-in-another-namespace).
-- **Sidecar injection** — pods labelled `wireguard-operator.io/enabled: "true"` get the client sidecar
+- **Sidecar injection** — pods labelled `tunnel-operator.io/enabled: "true"` get the client sidecar
   from an operator-written `MutatingAdmissionPolicy`, aimed at the default gateway in the operator's
   namespace; a static `ValidatingAdmissionPolicy` rejects any labelled pod that was not injected, and
   the operator keeps the client `RoleBinding` in namespaces that have labelled pods. See

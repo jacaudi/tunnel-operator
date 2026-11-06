@@ -97,7 +97,7 @@ the pod and have the operator inject it; see [Sidecar injection](#sidecar-inject
 
 ## Sidecar injection
 
-A pod labelled `wireguard-operator.io/enabled: "true"` is injected with the sidecar at admission, by
+A pod labelled `tunnel-operator.io/enabled: "true"` is injected with the sidecar at admission, by
 two policies the API server evaluates itself, so there is no webhook server and no certificate:
 
 ```text
@@ -106,7 +106,7 @@ labelled pod ──▶ MutatingAdmissionPolicy (operator-written) inserts wg-cli
 
 - **The mutating policy follows the default gateway.** One controller writes it with Server-Side
   Apply, aimed at the single `Wireguard` in the operator's own namespace annotated
-  `wireguard-operator.io/default: "true"`, and deletes it when there is not exactly one. Only the
+  `tunnel-operator.io/default: "true"`, and deletes it when there is not exactly one. Only the
   operator's namespace counts, so a tenant cannot pick the gateway.
 - **The validating policy is the backstop.** It is installed with the operator from
   `config/admission`, so it exists before the operator first starts, and it rejects a labelled pod that is not injected. A labelled pod

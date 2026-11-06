@@ -1,6 +1,6 @@
 # Sidecar injection
 
-Label a workload's pod template `wireguard-operator.io/enabled: "true"` and every pod created from
+Label a workload's pod template `tunnel-operator.io/enabled: "true"` and every pod created from
 it comes up with the [client sidecar](client-sidecar.md) already in place, attached to the cluster's
 default gateway, with its internet traffic leaving through the VPN. Nobody pastes the sidecar block,
 creates a `ServiceAccount` binding, or names a gateway. A labelled pod that cannot be tunnelled is
@@ -11,7 +11,7 @@ creates a `ServiceAccount` binding, or names a gateway. A labelled pod that cann
 template:
   metadata:
     labels:
-      wireguard-operator.io/enabled: "true"
+      tunnel-operator.io/enabled: "true"
 ```
 
 Only the value `"true"` opts a pod in. Both policies match pod creation only, so the label takes effect
@@ -28,12 +28,12 @@ certificates.
 
 | Policy | Written by | Does |
 |---|---|---|
-| `wireguard-operator-inject` (`MutatingAdmissionPolicy`, and its binding) | The operator, at runtime | Inserts the sidecar into each labelled pod |
-| `wireguard-operator-require-injection` (`ValidatingAdmissionPolicy`, and its binding) | [`config/admission`](../config/admission), applied by `make deploy` | Rejects a labelled pod that does not carry the sidecar |
+| `tunnel-operator-inject` (`MutatingAdmissionPolicy`, and its binding) | The operator, at runtime | Inserts the sidecar into each labelled pod |
+| `tunnel-operator-require-injection` (`ValidatingAdmissionPolicy`, and its binding) | [`config/admission`](../config/admission), applied by `make deploy` | Rejects a labelled pod that does not carry the sidecar |
 
 The second is the fail-closed backstop. It is installed with the operator, so it protects the cluster
 from install, before the operator has started, and it holds on a cluster that does not serve
-`MutatingAdmissionPolicy`. Both policies skip any pod carrying the `wireguard-operator.io/component`
+`MutatingAdmissionPolicy`. Both policies skip any pod carrying the `tunnel-operator.io/component`
 label (the gateway and the operator itself) and any pod in `kube-system`. The operator's own
 namespace is not skipped, so a labelled workload there is injected.
 
@@ -45,10 +45,10 @@ peer until then).
 ## The default gateway
 
 Injected sidecars attach to the one `Wireguard` in **the operator's own namespace** annotated
-`wireguard-operator.io/default: "true"`:
+`tunnel-operator.io/default: "true"`:
 
 ```sh
-kubectl annotate wireguard vpn -n <operator-namespace> wireguard-operator.io/default=true
+kubectl annotate wireguard vpn -n <operator-namespace> tunnel-operator.io/default=true
 ```
 
 The operator learns its namespace from `POD_NAMESPACE`, which the manager Deployment sets through the
@@ -58,7 +58,7 @@ controls the operator's namespace, never of a tenant who can edit a `Wireguard` 
 cannot steer every labelled pod through their own gateway, or break injection cluster-wide by
 adding a second default.
 
-With zero defaults, or more than one, the operator deletes `wireguard-operator-inject` and logs the
+With zero defaults, or more than one, the operator deletes `tunnel-operator-inject` and logs the
 cause (no default, or the names of the defaults). Labelled pods are then rejected until exactly one
 remains.
 
@@ -98,20 +98,20 @@ and the namespace, so the sidecar can reach the API server whatever the pod's
 `serviceAccountName`, init containers and volumes are left as they are.
 
 The operator also creates the client RBAC. When the first labelled pod appears in a namespace it
-creates the `RoleBinding` `wireguard-operator-client` there, binding the `wireguard-operator-client`
+creates the `RoleBinding` `tunnel-operator-client` there, binding the `tunnel-operator-client`
 `ClusterRole` to the group `system:serviceaccounts:<namespace>`, and it deletes the `RoleBinding`
 after the last labelled pod is gone. It only touches a `RoleBinding` it labelled
-`app.kubernetes.io/managed-by: wireguard-operator`: if another object already holds that name, it
+`app.kubernetes.io/managed-by: tunnel-operator`: if another object already holds that name, it
 leaves it alone, logs once for the namespace, and the pods there cannot register their peers.
 
 ## Rejections
 
-A pod labelled `wireguard-operator.io/enabled=true` is refused at creation, by the backstop, when:
+A pod labelled `tunnel-operator.io/enabled=true` is refused at creation, by the backstop, when:
 
 | Cause | Message |
 |---|---|
 | `hostNetwork: true` | `hostNetwork pods cannot be tunnelled` |
-| `wg-client` is not the first init container with `restartPolicy: Always` | `the pod is labelled wireguard-operator.io/enabled=true but was not injected with the WireGuard sidecar. Check that exactly one Wireguard in the operator's namespace is annotated wireguard-operator.io/default=true, that the operator is running, and that the cluster serves MutatingAdmissionPolicy (Kubernetes 1.34 and 1.35 need the beta enabled). The operator's log names the cause.` |
+| `wg-client` is not the first init container with `restartPolicy: Always` | `the pod is labelled tunnel-operator.io/enabled=true but was not injected with the WireGuard sidecar. Check that exactly one Wireguard in the operator's namespace is annotated tunnel-operator.io/default=true, that the operator is running, and that the cluster serves MutatingAdmissionPolicy (Kubernetes 1.34 and 1.35 need the beta enabled). The operator's log names the cause.` |
 
 For a Deployment, the refusal shows as a failed `ReplicaSet` event, not on the Deployment:
 
@@ -132,7 +132,7 @@ injected again and passes the backstop.
   namespace whose labelled pods were deleted while it was down. It also recreates a `RoleBinding`
   deleted by hand while labelled pods run.
 - **Gateway pods carry a label now.** The upgrade that introduced injection adds
-  `wireguard-operator.io/component: gateway` to each gateway pod template, so each gateway rolls
+  `tunnel-operator.io/component: gateway` to each gateway pod template, so each gateway rolls
   once.
 
 ## Trust model
