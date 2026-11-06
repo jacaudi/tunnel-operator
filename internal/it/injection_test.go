@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jacaudi/wireguard-operator/internal/resources"
+	"github.com/jacaudi/tunnel-operator/internal/resources"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )

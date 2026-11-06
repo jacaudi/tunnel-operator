@@ -22,8 +22,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/yaml"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"github.com/jacaudi/wireguard-operator/api/v1alpha1"
-	"github.com/jacaudi/wireguard-operator/internal/resources"
+	"github.com/jacaudi/tunnel-operator/api/v1alpha1"
+	"github.com/jacaudi/tunnel-operator/internal/resources"
 )
 
 func wgIn(ns, name string, annotations map[string]string) v1alpha1.Wireguard {

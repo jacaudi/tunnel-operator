@@ -27,10 +27,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/jacaudi/wireguard-operator/api/v1alpha1"
-	"github.com/jacaudi/wireguard-operator/internal/agent"
-	"github.com/jacaudi/wireguard-operator/internal/ipam"
-	"github.com/jacaudi/wireguard-operator/internal/resources"
+	"github.com/jacaudi/tunnel-operator/api/v1alpha1"
+	"github.com/jacaudi/tunnel-operator/internal/agent"
+	"github.com/jacaudi/tunnel-operator/internal/ipam"
+	"github.com/jacaudi/tunnel-operator/internal/resources"
 
 	wgtypes "golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	appsv1 "k8s.io/api/apps/v1"

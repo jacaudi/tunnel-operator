@@ -2,7 +2,7 @@ domain: wireguard-operator.io
 layout:
 - go.kubebuilder.io/v3
 projectName: wireguard-operator
-repo: github.com/jacaudi/wireguard-operator
+repo: github.com/jacaudi/tunnel-operator
 resources:
 - api:
     crdVersion: v1
@@ -11,7 +11,7 @@ resources:
   domain: wireguard-operator.io
   group: vpn
   kind: Wireguard
-  path: github.com/jacaudi/wireguard-operator/api/v1alpha1
+  path: github.com/jacaudi/tunnel-operator/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
@@ -20,6 +20,6 @@ resources:
   domain: wireguard-operator.io
   group: vpn
   kind: WireguardPeer
-  path: github.com/jacaudi/wireguard-operator/api/v1alpha1
+  path: github.com/jacaudi/tunnel-operator/api/v1alpha1
   version: v1alpha1
 version: "3"

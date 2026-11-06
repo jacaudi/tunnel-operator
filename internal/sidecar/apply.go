@@ -8,8 +8,8 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
-	"github.com/jacaudi/wireguard-operator/internal/resources"
-	"github.com/jacaudi/wireguard-operator/internal/wireguard"
+	"github.com/jacaudi/tunnel-operator/internal/resources"
+	"github.com/jacaudi/tunnel-operator/internal/wireguard"
 )
 
 // podDatapath applies a Tunnel to the pod's own network namespace: wg0 at resources.TunnelMTU, its

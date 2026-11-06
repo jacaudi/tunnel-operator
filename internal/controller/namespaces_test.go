@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jacaudi/wireguard-operator/api/v1alpha1"
-	"github.com/jacaudi/wireguard-operator/internal/agent"
+	"github.com/jacaudi/tunnel-operator/api/v1alpha1"
+	"github.com/jacaudi/tunnel-operator/internal/agent"
 
 	corev1 "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/api/meta"

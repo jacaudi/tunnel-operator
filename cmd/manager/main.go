@@ -23,8 +23,8 @@ import (
 	"fmt"
 	"os"
 
-	vpnv1alpha1 "github.com/jacaudi/wireguard-operator/api/v1alpha1"
-	controllers "github.com/jacaudi/wireguard-operator/internal/controller"
+	vpnv1alpha1 "github.com/jacaudi/tunnel-operator/api/v1alpha1"
+	controllers "github.com/jacaudi/tunnel-operator/internal/controller"
 	v1 "k8s.io/api/core/v1"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)

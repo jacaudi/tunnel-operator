@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jacaudi/wireguard-operator/internal/resources"
+	"github.com/jacaudi/tunnel-operator/internal/resources"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/labels"

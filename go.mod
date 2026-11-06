@@ -1,4 +1,4 @@
-module github.com/jacaudi/wireguard-operator
+module github.com/jacaudi/tunnel-operator
 
 go 1.26.0
 

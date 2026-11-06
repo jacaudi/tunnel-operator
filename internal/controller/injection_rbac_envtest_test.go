@@ -20,7 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/config"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	"github.com/jacaudi/wireguard-operator/internal/resources"
+	"github.com/jacaudi/tunnel-operator/internal/resources"
 )
 
 // stopRoleBindings stops the manager running the suite's ClientRoleBindingReconciler.
