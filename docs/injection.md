@@ -29,10 +29,10 @@ certificates.
 | Policy | Written by | Does |
 |---|---|---|
 | `wireguard-operator-inject` (`MutatingAdmissionPolicy`, and its binding) | The operator, at runtime | Inserts the sidecar into each labelled pod |
-| `wireguard-operator-require-injection` (`ValidatingAdmissionPolicy`, and its binding) | [`release.yaml`](../release.yaml) | Rejects a labelled pod that does not carry the sidecar |
+| `wireguard-operator-require-injection` (`ValidatingAdmissionPolicy`, and its binding) | [`config/admission`](../config/admission), applied by `make deploy` | Rejects a labelled pod that does not carry the sidecar |
 
-The second is the fail-closed backstop. It ships in the release, so it protects the cluster from
-install, before the operator has started, and it holds on a cluster that does not serve
+The second is the fail-closed backstop. It is installed with the operator, so it protects the cluster
+from install, before the operator has started, and it holds on a cluster that does not serve
 `MutatingAdmissionPolicy`. Both policies skip any pod carrying the `wireguard-operator.io/component`
 label (the gateway and the operator itself) and any pod in `kube-system`. The operator's own
 namespace is not skipped, so a labelled workload there is injected.
@@ -145,14 +145,9 @@ runs untunnelled.
 
 ## Uninstall
 
-`kubectl delete -f release.yaml` removes the backstop and the operator, but not what the operator
-wrote at runtime: a cluster-scoped policy cannot be owned by the namespaced operator, and the
-`RoleBinding`s sit in other namespaces. Remove them with one command:
-
-```sh
-kubectl delete mutatingadmissionpolicy,mutatingadmissionpolicybinding,rolebinding -A \
-  -l app.kubernetes.io/managed-by=wireguard-operator
-```
+Uninstalling the operator removes the backstop, but not what the operator wrote at runtime: a
+cluster-scoped policy cannot be owned by the namespaced operator, and the `RoleBinding`s sit in other
+namespaces. [installation.md](installation.md#uninstall) has the command that removes them.
 
 ## Without injection
 

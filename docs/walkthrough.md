@@ -19,23 +19,30 @@ cd wireguard-operator
 make kustomize
 (cd config/default && ../../bin/kustomize edit set namespace network)
 make deploy IMG=ghcr.io/jacaudi/wireguard-operator/manager:latest
-kubectl label namespace network pod-security.kubernetes.io/enforce=privileged
+kubectl label namespace network pod-security.kubernetes.io/enforce=privileged --overwrite
 kubectl -n network rollout status deployment/wireguard-controller-manager
 ```
 
-The install already refuses labelled pods, before any gateway exists: the backstop policy ships
+> **`make undeploy` deletes the install namespace and everything in it.** If `network` already holds
+> other workloads, see [installation.md](installation.md#install-into-another-namespace) first.
+
+The install already refuses labelled pods, before any gateway exists: the backstop policy comes
 with it.
 
 ```sh
 kubectl get validatingadmissionpolicy wireguard-operator-require-injection
 ```
 
-See [installation.md](installation.md#install-into-another-namespace) for what the namespace edit
-changes.
-
 ## 2. Create the default gateway
 
-Edit [`examples/01-server.yaml`](../examples/01-server.yaml):
+Copy [`examples/01-server.yaml`](../examples/01-server.yaml) out of the clone, so your provider key
+never sits in it:
+
+```sh
+cp examples/01-server.yaml ~/vpn-gateway.yaml
+```
+
+Then edit the copy:
 
 - **`localCIDRs`** — replace the three placeholders with your cluster's pod, Service and node
   ranges. [Prerequisites](prerequisites.md#localcidrs) has the commands that find them.
@@ -44,17 +51,16 @@ Edit [`examples/01-server.yaml`](../examples/01-server.yaml):
   `SERVER_COUNTRIES`). Leave the variables in
   [crd-wireguard.md](crd-wireguard.md#reserved-gluetun-variables) out; the operator sets them.
 
-The file already carries `wireguard-operator.io/default: "true"`, so applied in `network` it becomes
-the gateway injected pods attach to:
+The file carries `wireguard-operator.io/default: "true"`, so applied in `network` it becomes the
+gateway injected pods attach to. Apply it and wait until gluetun has connected to your provider:
 
 ```sh
-kubectl -n network apply -f examples/01-server.yaml
-kubectl -n network get wireguard vpn
+kubectl -n network apply -f ~/vpn-gateway.yaml
+kubectl -n network wait wireguard/vpn --for=jsonpath='{.status.status}'=ready --timeout=10m
 ```
 
-`STATUS` reads `pending` until gluetun has connected to your provider, then `ready`. If it reads
-`error`, `kubectl -n network describe wireguard vpn` names the problem; most often a `localCIDRs`
-entry. The operator now writes the injection policy:
+If it reads `error` instead, `kubectl -n network describe wireguard vpn` names the problem; most
+often a `localCIDRs` entry. The operator now writes the injection policy:
 
 ```sh
 kubectl get mutatingadmissionpolicy wireguard-operator-inject
@@ -67,7 +73,7 @@ whose pod template carries only the label `wireguard-operator.io/enabled: "true"
 `curl`, kept running so you can test from it.
 
 ```sh
-kubectl label namespace default pod-security.kubernetes.io/enforce=privileged
+kubectl label namespace default pod-security.kubernetes.io/enforce=privileged --overwrite
 kubectl -n default apply -f examples/injected-client.yaml
 kubectl -n default rollout status deployment/app
 ```
@@ -77,17 +83,8 @@ pod's default route points into it.
 
 ## 4. Verify
 
-**The pod was injected.** Its first init container is the sidecar:
-
-```sh
-kubectl -n default get pod -l app=app -o jsonpath='{.items[0].spec.initContainers[0].name}{"\n"}'
-```
-
-```text
-wg-client
-```
-
-**The pod registered a peer** in its own namespace, named after the pod:
+**The pod registered a peer** in its own namespace, named after the pod. Only the injected sidecar
+creates it:
 
 ```sh
 kubectl get wireguardpeer -A
@@ -111,16 +108,16 @@ resolve from `app`, because cluster DNS is inside `localCIDRs`.
 
 ## 5. See it fail closed
 
-Remove the default annotation. With no default gateway, the operator deletes its injection policy,
-so a new labelled pod cannot be injected and the backstop refuses it:
+Remove the default annotation and wait for the operator to delete its injection policy. A labelled
+pod then cannot be injected, and the backstop refuses it. A server-side dry run shows the refusal
+without creating anything:
 
 ```sh
 kubectl -n network annotate wireguard vpn wireguard-operator.io/default-
-kubectl -n default rollout restart deployment/app
-kubectl -n default get events --field-selector reason=FailedCreate
+kubectl wait --for=delete mutatingadmissionpolicy/wireguard-operator-inject --timeout=1m
+kubectl -n default run refused --image=curlimages/curl:8.17.0 \
+  --labels=wireguard-operator.io/enabled=true --dry-run=server -- true
 ```
-
-The ReplicaSet's event carries the refusal:
 
 ```text
 ... the pod is labelled wireguard-operator.io/enabled=true but was not injected with the WireGuard
@@ -130,19 +127,13 @@ MutatingAdmissionPolicy (Kubernetes 1.34 and 1.35 need the beta enabled). The op
 the cause.
 ```
 
-The operator's log names the cause:
-
-```sh
-kubectl -n network logs deployment/wireguard-controller-manager | grep 'injection is off'
-```
-
-The running pod is not touched: the policies act only when a pod is created, and the rollout keeps
-the old pod until a new one starts. Restore the annotation, and the ReplicaSet's next retry is
-injected and the rollout completes:
+If it is admitted, the API server has not caught up with the deleted policy yet; wait a few seconds
+and re-run it. The running `app` pod is not touched: the policies act only when a pod is created.
+Restore the annotation, and the operator writes the policy again:
 
 ```sh
 kubectl -n network annotate wireguard vpn wireguard-operator.io/default=true
-kubectl -n default rollout status deployment/app
+kubectl get mutatingadmissionpolicy wireguard-operator-inject
 ```
 
 The other refusals are listed in [injection.md](injection.md#rejections).
@@ -156,10 +147,9 @@ make undeploy
 kubectl delete mutatingadmissionpolicy,mutatingadmissionpolicybinding,rolebinding -A \
   -l app.kubernetes.io/managed-by=wireguard-operator
 git restore config/default/kustomization.yaml config/manager/kustomization.yaml
+rm ~/vpn-gateway.yaml
 ```
 
-Deleting the workload deletes its pods, their peers and, once the last labelled pod is gone, the
-`RoleBinding` the operator made in `default`. `make undeploy` deletes the CRDs, and with them the
-gateway, and the `network` namespace. The `kubectl delete` removes what the operator wrote at
-runtime that nothing else owns ([why](installation.md#uninstall)). Run `git restore` last:
-`make undeploy` needs the namespace edit to find what to delete.
+`make undeploy` also deletes the `network` namespace; to keep it, use the
+[namespace-preserving command](installation.md#uninstall) instead. Run `git restore` last: uninstalling
+needs the namespace edit.

@@ -25,8 +25,9 @@ through a ClusterIP Service.
 ## What it does
 
 - **Label-driven injection** — pods labelled `wireguard-operator.io/enabled: "true"` get the client
-  sidecar at admission and attach to the default gateway. A labelled pod that cannot be tunnelled
-  is rejected with a reason. See [docs/injection.md](docs/injection.md).
+  sidecar at admission and attach to the default gateway. A labelled pod that cannot be injected,
+  or uses the host network, is rejected with a reason; one in a namespace the gateway refuses is
+  admitted and waits in its startup probe. See [docs/injection.md](docs/injection.md).
 - **`Wireguard`** — a gateway: a WireGuard server pod with a gluetun container that holds the
   tunnel to your VPN provider. It fails closed by routing, and reads ready only when a peer's packet
   would be forwarded into the tunnel and gluetun is healthy. See [docs/gluetun-egress.md](docs/gluetun-egress.md).
@@ -52,24 +53,29 @@ cd wireguard-operator
 make kustomize
 (cd config/default && ../../bin/kustomize edit set namespace network)
 make deploy IMG=ghcr.io/jacaudi/wireguard-operator/manager:latest
-kubectl label namespace network pod-security.kubernetes.io/enforce=privileged
+kubectl label namespace network pod-security.kubernetes.io/enforce=privileged --overwrite
 kubectl -n network rollout status deployment/wireguard-controller-manager
 ```
 
-**2. Create the default gateway.** Edit [`examples/01-server.yaml`](examples/01-server.yaml): set
+> **`make undeploy` deletes the install namespace and everything in it.** If `network` already holds
+> other workloads, uninstall with the namespace-preserving command in
+> [docs/installation.md](docs/installation.md#uninstall).
+
+**2. Create the default gateway.** Copy [`examples/01-server.yaml`](examples/01-server.yaml) out of the
+clone, so your provider key never sits in it (`cp examples/01-server.yaml ~/vpn-gateway.yaml`). Set
 `localCIDRs` to your cluster's networks ([how to find them](docs/prerequisites.md#localcidrs)) and
 put your provider's gluetun variables in its `vpn-provider` Secret. The file carries the
 `wireguard-operator.io/default: "true"` annotation, which counts only in the operator's namespace:
 
 ```sh
-kubectl -n network apply -f examples/01-server.yaml
+kubectl -n network apply -f ~/vpn-gateway.yaml
 kubectl -n network get wireguard vpn    # STATUS: ready once gluetun has connected
 ```
 
 **3. Label a workload.** Here, a Deployment in `default`:
 
 ```sh
-kubectl label namespace default pod-security.kubernetes.io/enforce=privileged
+kubectl label namespace default pod-security.kubernetes.io/enforce=privileged --overwrite
 kubectl -n default patch deployment <name> \
   -p '{"spec":{"template":{"metadata":{"labels":{"wireguard-operator.io/enabled":"true"}}}}}'
 ```

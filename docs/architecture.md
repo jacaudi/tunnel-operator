@@ -101,15 +101,15 @@ A pod labelled `wireguard-operator.io/enabled: "true"` is injected with the side
 two policies the API server evaluates itself, so there is no webhook server and no certificate:
 
 ```text
-labelled pod ──▶ MutatingAdmissionPolicy (operator-written) inserts wg-client ──▶ ValidatingAdmissionPolicy (static, in release.yaml) admits it or says why not
+labelled pod ──▶ MutatingAdmissionPolicy (operator-written) inserts wg-client ──▶ ValidatingAdmissionPolicy (static, installed with the operator) admits it or says why not
 ```
 
 - **The mutating policy follows the default gateway.** One controller writes it with Server-Side
   Apply, aimed at the single `Wireguard` in the operator's own namespace annotated
   `wireguard-operator.io/default: "true"`, and deletes it when there is not exactly one. Only the
   operator's namespace counts, so a tenant cannot pick the gateway.
-- **The validating policy is the backstop.** It ships in `release.yaml`, so it exists before the
-  operator first starts, and it rejects a labelled pod that is not injected. A labelled pod
+- **The validating policy is the backstop.** It is installed with the operator from
+  `config/admission`, so it exists before the operator first starts, and it rejects a labelled pod that is not injected. A labelled pod
   therefore either carries the tunnel or does not run.
 - **The client RoleBinding follows the pods.** A second controller creates the `RoleBinding` that
   gives the client `ClusterRole` to a namespace's service accounts when its first labelled pod
