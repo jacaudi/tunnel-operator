@@ -66,6 +66,8 @@ includes:
   # Chart repos only — delete this include if the repo ships no Helm chart.
   # NOT given a `dir:`: chart.yml runs from the repo root because generation
   # reads config/ and the drift gate diffs against the whole worktree.
+  chart:
+    taskfile: .taskfiles/chart.yml
 
 tasks:
   default:
@@ -78,12 +80,14 @@ tasks:
     cmds:
       - task: repo:ci
       - task: go:ci
+      - task: chart:ci
 
   lint:
     desc: Static checks only — no tests
     cmds:
       - task: repo:ci
       - task: go:lint
+      - task: chart:lint
 
   test:
     desc: Unit tests only

@@ -189,6 +189,21 @@ jobs:
           echo "generated files match the API types"
 
       # --- Helm (chart repos only; a no-op otherwise) --------------------------
+      - name: Install Helm
+        # THE SAME PIN ci-chart.yml PUBLISHES WITH, so the gate and the publisher
+        # run one Helm. The runner image's preinstalled helm is a different
+        # version and would let a chart pass here and fail there.
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          # renovate: datasource=github-releases depName=helm/helm
+          version: v4.3.1
+
+      - name: Install kustomize
+        # chart-invariants.sh renders config/default with bin/kustomize to compare
+        # it against the chart, and nothing earlier in this job fetches it (the
+        # release.yaml drift step that used to is gone).
+        run: make kustomize
+
       - name: Resolve chart dependencies
         # Same script ci-chart.yml runs, so CI and local resolve identically.
         # `helm dependency build` honours Chart.lock; `update` would rewrite it.
@@ -224,6 +239,22 @@ jobs:
             # default values.
             helm template release-test "${d}" >/dev/null
           done
+
+      - name: Check chart invariants
+        # The checks no schema validator makes: the admission binding names a
+        # policy that is rendered (else it fails open), the client ClusterRole
+        # carries the name the operator binds at runtime, and no cluster-scoped
+        # object carries a namespace. Renders the chart and config/default itself.
+        run: sh scripts/chart-invariants.sh
+
+      - name: Test the chart invariant checker
+        run: sh tests/chart-invariants-test.sh
+
+      - name: Test the release-version gate
+        run: sh tests/chart-release-version-test.sh
+
+      - name: Test the rendered chart
+        run: sh tests/chart-render-test.sh
 
       # --- discover project directories ---------------------------------------
       # NOTHING here hardcodes a project directory — that is what lets one

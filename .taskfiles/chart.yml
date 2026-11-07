@@ -1,0 +1,135 @@
+# Helm chart — dependency resolution, generation, drift gate, lint, packaging.
+#
+# Chart is a DOMAIN, like a language, so it owns its own taskfile rather than
+# living in repo.yml (whose job is cross-cutting repo checks: actions, yaml,
+# Dockerfiles). Not every chart repo is an operator, and not every repo with a
+# taskfile has a chart.
+#
+# The `generate` family exists only for kubebuilder-style operators, where the
+# chart's CRDs and RBAC are DERIVED from config/ rather than hand-written.
+# towonel-operator and nextdns-operator both already do this.
+#
+# A HAND-MAINTAINED CHART NEEDS NO EDIT HERE. `generate` fails loudly if you ask
+# for it without the generators, which is right — you asked. But `verify` and
+# therefore `ci` delegate to scripts/chart-drift.sh, which SKIPS a repo with no
+# hack/ generators, so `task ci` passes as it stands. The earlier advice to
+# "delete generate and verify" was unfollowable anyway: `ci` names `verify`, so
+# taking it broke the target it was meant to repair.
+#
+# CHART_PATH is `charts` fleet-wide — the default ci-chart.yml assumes. Repos on
+# the older `chart/` layout move during migration; do not parameterise around it.
+version: '3'
+
+vars:
+  CHART_PATH: charts
+
+tasks:
+  ci:
+    desc: Everything CI checks about the chart
+    cmds:
+      - task: deps
+      - task: verify      # drift gate — must run BEFORE lint, or lint checks stale output
+      - task: lint
+
+  deps:
+    desc: Register dependency repos and build from Chart.lock
+    cmds:
+      # THE single source of dependency resolution — ci-lint.yml and ci-chart.yml
+      # run this same script, so local and CI resolve identically. Do not
+      # re-inline `helm dependency build charts`: the script registers the
+      # dependency repos first, and an inline copy silently drops that half.
+      # `build`, never `update` — build installs exactly what Chart.lock pins,
+      # update re-resolves and REWRITES the lock.
+      - sh scripts/chart-deps.sh
+
+  # --- generation (kubebuilder operators only) -----------------------------
+  generate:
+    desc: Regenerate chart CRDs and RBAC from config/
+    cmds:
+      - task: generate:crds
+      - task: generate:rbac
+
+  generate:crds:
+    desc: Sync CRDs from config/crd/bases into the chart
+    # `hack/sync-helm-crds.sh` is repo-specific — it decides whether CRDs land in
+    # charts/crds/ (helm installs them once, never upgrades) or in
+    # charts/templates/ wrapped in install/keep gates (upgradeable, the operator
+    # convention here). towonel-operator has a working implementation to copy.
+    cmds:
+      - |
+        set -eu
+        [ -x hack/sync-helm-crds.sh ] || {
+          echo "::error::hack/sync-helm-crds.sh missing or not executable"
+          echo "this repo's chart is hand-maintained — delete chart:generate and chart:verify" >&2
+          exit 1
+        }
+        ./hack/sync-helm-crds.sh
+
+  generate:rbac:
+    desc: Regenerate chart RBAC from config/rbac/role.yaml
+    cmds:
+      - |
+        set -eu
+        [ -x hack/generate-helm-rbac.sh ] || {
+          echo "::error::hack/generate-helm-rbac.sh missing or not executable"
+          echo "this repo's chart is hand-maintained — delete chart:generate and chart:verify" >&2
+          exit 1
+        }
+        ./hack/generate-helm-rbac.sh
+
+  verify:
+    desc: Fail if the committed chart is stale (CI drift gate)
+    cmds:
+      # THE SAME SCRIPT ci-lint.yml runs, and nothing else. This used to depend
+      # on `generate` and then decide the verdict itself, which was wrong twice
+      # over and broke `task ci` in every hand-maintained chart repo:
+      #
+      #   1. `task: generate` made this a HARD FAILURE wherever hack/'s
+      #      generators are absent — `::error::hack/sync-helm-crds.sh missing or
+      #      not executable`, exit 201 — so the one command this taskfile tells
+      #      you to run before pushing could not pass in any chart repo that is
+      #      not a kubebuilder operator. The script SKIPS that case, which is
+      #      what CI has always done. (The header's old advice to delete
+      #      `generate` and `verify` did not help: `ci` below names `verify`.)
+      #   2. `git diff --quiet` sees TRACKED files only, and the ordinary way a
+      #      chart falls behind its API types is a file that does not exist yet
+      #      — controller-gen emits one file per CRD, so adding a type adds a
+      #      file. Untracked, it is invisible to `git diff`, the check exits 0,
+      #      and the chart publishes without the CRD. chart-drift.sh uses
+      #      `git status --porcelain --untracked-files=all` for exactly this and
+      #      documents the measurement.
+      #
+      # The script runs the generators itself when they exist, so nothing is
+      # lost by dropping the `generate` dependency — and `task chart:generate`
+      # stays available for running them on purpose.
+      - sh scripts/chart-drift.sh
+
+  # --- validation -----------------------------------------------------------
+  lint:
+    desc: helm lint + template
+    cmds:
+      # `template` as well as `lint`: lint catches schema and metadata problems,
+      # but only a full render catches a template that throws on default values.
+      - |
+        set -eu
+        helm lint '{{.CHART_PATH}}'
+        helm template release-test '{{.CHART_PATH}}' >/dev/null
+        echo "chart lints and renders"
+
+  # --- packaging ------------------------------------------------------------
+  package:
+    desc: Package the chart into /tmp (CI publishes; this is for local inspection)
+    requires:
+      vars: [VERSION]
+    env:
+      VERSION: '{{.VERSION}}'
+    cmds:
+      - task: deps
+      - |
+        set -eu
+        helm package '{{.CHART_PATH}}' --version "${VERSION}" --destination /tmp
+        echo "packaged to /tmp"
+
+  # Publishing is CI's job (ci-chart.yml), not a local task. A chart pushed from
+  # a workstation skips the appVersion-image-exists check and the drift gate, and
+  # is exactly how a chart pointing at a nonexistent image reaches a registry.

@@ -2,8 +2,9 @@
 _commit: a676cfe
 _src_path: gh:jacaudi/template
 build_context: .
+chart_registry: ""
 extra_build_contexts: []
-has_chart: false
+has_chart: true
 image_name: ghcr.io/jacaudi/tunnel-operator/manager
 integration_kind: envtest
 lang_go: true

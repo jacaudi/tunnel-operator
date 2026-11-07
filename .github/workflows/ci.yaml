@@ -126,8 +126,21 @@ jobs:
   # release at `initial-version`. The manifest (.github/release-please-manifest.json),
   # never `release-as` (a permanent override, not a bootstrap), is how a first
   # version is set.
+  #
+  # THE CHART IS RELEASED WITH THE ROOT PACKAGE, not as a package of its own: the
+  # release-please config lists charts/Chart.yaml under the root package's
+  # `extra-files`, so chart version, appVersion and the git tag move together.
+  # That is why this call passes NO `chart-package`. The template's
+  # `has_chart: true` rendering adds `chart-package: charts` here (and a second
+  # release-please package); a `copier update` will re-add it, and it must be
+  # removed, or ci-release.yml fails the release looking for `charts--version`
+  # outputs that this config never produces.
+  #
+  # `e2e` IS A GATE ON THE RELEASE, not just on `ci`: it is the only stage that
+  # installs the operator into a cluster and waits for the manager, so a release
+  # must not be cut past a red e2e.
   release:
-    needs: [smoke]
+    needs: [smoke, e2e]
     if: ${{ github.ref == 'refs/heads/main' }}
     permissions:
       contents: write
@@ -175,6 +188,34 @@ jobs:
       source: ${{ needs.build-agent.outputs.image }}
       version: ${{ needs.release.outputs.tag_name }}
       image: ghcr.io/jacaudi/tunnel-operator/agent
+
+  # THE CHART IS PUBLISHED LAST: after the release exists AND both images carry
+  # their release tags, because the chart's appVersion names those tags and a
+  # chart that points at an image not yet retagged installs into ImagePullBackOff.
+  # ci-chart.yml refuses to publish unless appVersion equals this release and both
+  # images exist.
+  #
+  # `version` is BARE (`1.2.3`), never the `v`-prefixed tag_name: Helm resolves
+  # "latest" by SemVer and SemVer forbids the `v`. `ref` is the TAG, so the
+  # packaged chart is the one the release commit carries.
+  #
+  # NO `secrets:`. The push uses GITHUB_TOKEN (`packages: write`); GHCR rejects
+  # GitHub App installation tokens, so passing the App's secrets here would not
+  # help and the template's rendering of them is deliberately dropped.
+  release-chart:
+    needs: [release, release-image, release-image-agent]
+    if: ${{ needs.release.outputs.release_created == 'true' }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/ci-chart.yml
+    with:
+      version: ${{ needs.release.outputs.version }}
+      ref: ${{ needs.release.outputs.tag_name }}
+      chart-path: charts
+      registry: oci://ghcr.io/jacaudi/charts
+      image: ghcr.io/jacaudi/tunnel-operator/manager
+      agent-image: ghcr.io/jacaudi/tunnel-operator/agent
 
   # THE single required status check — point every ruleset at `ci` and nothing
   # else. A REGULAR job, never a called workflow: a job that CALLS a reusable

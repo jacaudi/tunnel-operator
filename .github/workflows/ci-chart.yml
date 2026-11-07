@@ -1,0 +1,223 @@
+# Release stage — package the Helm chart and push it to ghcr.io/<owner>/charts/<name>.
+#
+# THE TAG ASYMMETRY IS DELIBERATE AND MUST NOT BE "NORMALISED":
+#
+#   chart tag  <- inputs.version    BARE semver    oci://ghcr.io/o/charts/foo:1.2.3
+#   image tag  <- Chart.appVersion  V-PREFIXED     ghcr.io/o/foo:v1.2.3
+#
+# Helm resolves "latest" by listing tags and picking the highest VALID SemVer, and
+# SemVer forbids a leading `v` — it is a git convention, not part of the spec. A
+# v-prefixed chart tag therefore yields zero valid versions and the chart is
+# unusable without an explicit `--version`. Five of the six live charts are broken
+# exactly this way. Nothing here may add a `v` to `version`; it arrives bare from
+# release-please's chart package and must stay bare.
+#
+# The failure is SILENT on this side of the wire: helm packages and pushes a
+# v-prefixed chart perfectly happily, and only the consumer ever finds out, with
+# "unable to locate any tags in provided repository". Verified against a local
+# OCI registry.
+#
+# The normalisation inside chart-appversion.sh runs the OTHER way — appVersion
+# gets a `v` ADDED before the image lookup — and is also correct, because images
+# are v-prefixed.
+#
+# APPVERSION IS COMMITTED, NOT COMPUTED, and it is verified before anything is
+# published, twice over. It must EQUAL the release being cut (a missed
+# release-please marker would otherwise ship chart X.Y.Z rendering the previous
+# images, and the existence check cannot see that because those tags exist), and
+# the image it names must EXIST. A chart naming an image that was never built
+# installs cleanly and then leaves every pod in ImagePullBackOff.
+#
+# DEVIATIONS FROM THE TEMPLATE (jacaudi/template template/.github/workflows/
+# ci-chart.yml @ a676cfe). Each is deliberate; a `copier update` will try to
+# revert them, so re-apply rather than accept the template's text.
+#
+#   (a) Helm is v4.3.1, not the template's v3.21.4. ci-lint.yml installs the SAME
+#       pin, so the gate and the publisher run one Helm: the constraint the
+#       template's own pin comment states, met from the other side. See the
+#       "Install Helm" step.
+#   (b) Two inputs are added. `ref` (default '') is the git ref to package, and
+#       the checkout uses it: a release must package the TAG, not whatever commit
+#       the workflow was dispatched from. `agent-image` (default '') is the
+#       second image this chart renders (the sidecar the manager injects); it is
+#       optional for the workflow but must be non-empty where it is used.
+#   (c) NO GitHub App. The template's App-token step and both App secrets are
+#       removed: the chart publishes with GITHUB_TOKEN (`packages: write`) alone,
+#       because GHCR rejects App installation tokens. The login step uses
+#       github.actor and secrets.GITHUB_TOKEN.
+#   (d) A "Verify appVersion matches the release" step is added before the image
+#       checks (scripts/chart-release-version.sh, covered by
+#       tests/chart-release-version-test.sh).
+#   (e) "Verify the image named by appVersion exists" checks the agent image as
+#       well as the manager image: the chart renders both.
+#   (f) Env bindings. The job-level `env:` gains AGENT_IMAGE, lowercased by the
+#       normalise step like IMAGE, and step (d) binds CHART_VERSION itself (the
+#       template binds it only on "Package and push"). actionlint does not catch
+#       a shell variable that no `env:` binds, so verifying this file includes
+#       reading those bindings back with yq.
+#   (g) The template header's paragraph saying a push needs APP_ID and
+#       APP_PRIVATE_KEY is replaced by (c): this chart must not need them.
+name: ci-chart
+
+on:
+  workflow_call:
+    inputs:
+      chart-path:
+        description: Path to the chart directory. Fleet convention is charts/.
+        required: false
+        default: charts
+        type: string
+      version:
+        description: >-
+          Chart version to publish, BARE semver (from release-please's chart
+          package). Never v-prefixed — see the header.
+        required: true
+        type: string
+      registry:
+        description: OCI registry namespace to push into.
+        required: false
+        default: ''
+        type: string
+      image:
+        description: Image repo that appVersion refers to. Defaults to ghcr.io/<owner>/<repo>.
+        required: false
+        default: ''
+        type: string
+      agent-image:
+        description: Image repo of the sidecar agent that appVersion also refers to. Required wherever the image check runs.
+        required: false
+        default: ''
+        type: string
+      ref:
+        description: Git ref to package. Empty packages the triggering commit; a release must pass its tag.
+        required: false
+        default: ''
+        type: string
+    outputs:
+      chart:
+        description: Pushed chart reference
+        value: ${{ jobs.chart.outputs.chart }}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  chart:
+    name: package + push chart
+    runs-on: ubuntu-latest
+    # A CEILING, not an estimate. Without one the job inherits GitHub's
+    # 360-minute default, so a `helm repo add` against an unreachable classic
+    # repo — the one step here that touches the network — would hang for six
+    # hours instead of failing.
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      chart: ${{ steps.push.outputs.chart }}
+    env:
+      CHART_PATH: ${{ inputs.chart-path }}
+      # `registry` and `image` are RETAINED, reversing the original subtraction
+      # pass. kiwix-helm-chart's image is `kiwix-downloader`, NOT repo-named, so
+      # without `image` the appVersion check looks up a tag that cannot exist and
+      # the chart can never publish; and its chart lives at
+      # oci://ghcr.io/jacaudi/kiwix-helm-chart, so `registry` is what makes a
+      # namespace move a decision rather than a silent break of every published
+      # `helm install` URL.
+      REGISTRY: ${{ inputs.registry != '' && inputs.registry || format('oci://ghcr.io/{0}/charts', github.repository_owner) }}
+      IMAGE: ${{ inputs.image != '' && inputs.image || format('ghcr.io/{0}', github.repository) }}
+      AGENT_IMAGE: ${{ inputs.agent-image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      # GHCR rejects uppercase refs; owner/repo casing is not guaranteed.
+      - name: Normalise the image names to lowercase
+        run: |
+          echo "IMAGE=$(printf '%s' "${IMAGE}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+          echo "AGENT_IMAGE=$(printf '%s' "${AGENT_IMAGE}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      # THE VERSION IS PINNED, AND IT IS PINNED TO THE SAME HELM CI-LINT INSTALLS.
+      #
+      # Without a `version:` this action installs `latest`, so a future helm 5
+      # would reach every chart publish with no pull request anywhere, which is
+      # the exact shape this repo's pinning discipline exists to prevent. Worse,
+      # the pre-merge GATE and the PUBLISHER could run different helms: a chart
+      # could pass lint and then fail here, on main, after the images had already
+      # been released.
+      #
+      # So the constraint is that the publisher runs the same helm as the gate.
+      # The template meets it by aligning DOWN to ubuntu-latest's helm 3 and
+      # installing nothing in ci-lint. This repo meets it the other way (deviation
+      # (a) above): ci-lint.yml installs this exact pin in the same change, so the
+      # two cannot drift apart except in a PR that touches both.
+      #
+      # Verified against a real helm v4.3.1 on this chart: `helm package
+      # --version 1.2.3` writes `tunnel-operator-1.2.3.tgz` — the exact name the
+      # push step below constructs.
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          # renovate: datasource=github-releases depName=helm/helm
+          version: v4.3.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The SAME script ci-lint.yml runs and `task chart:deps` runs locally, so
+      # all three resolve dependencies identically.
+      - name: Register repos and build chart dependencies
+        run: sh scripts/chart-deps.sh
+
+      # BEFORE the image checks, and a script rather than an inline block, for the
+      # reason below. This one is the check the image-existence gate cannot make:
+      # appVersion is bumped by an x-release-please-version marker, and if it is
+      # missed the chart would ship at the new version rendering the old images,
+      # all of which exist. The version arrives from the caller, so it is bound
+      # here, on this step.
+      - name: Verify appVersion matches the release
+        env:
+          CHART_VERSION: ${{ inputs.version }}
+        run: sh scripts/chart-release-version.sh "${CHART_PATH}" "${CHART_VERSION}"
+
+      # A script, not an inline block: the appVersion guards and the v-prefix
+      # normalisation are branches a shell harness cannot reach inside workflow
+      # YAML. The chart renders TWO images, so both are checked; the agent is the
+      # one nothing else here would notice missing.
+      - name: Verify the image named by appVersion exists
+        run: |
+          set -euo pipefail
+          [ -n "${AGENT_IMAGE}" ] || { echo "::error::agent-image input is required: the chart renders the agent image too"; exit 1; }
+          sh scripts/chart-appversion.sh "${CHART_PATH}" "${IMAGE}"
+          sh scripts/chart-appversion.sh "${CHART_PATH}" "${AGENT_IMAGE}"
+
+      # `template` as well as `lint`: lint catches schema and metadata problems,
+      # but only a full render catches a template that throws on default values.
+      - name: Lint and template
+        run: |
+          set -euo pipefail
+          helm lint "${CHART_PATH}"
+          helm template release-test "${CHART_PATH}" >/dev/null
+
+      # `--version "${CHART_VERSION}"` verbatim, and the tarball helm writes is
+      # `<name>-<version>.tgz` — verified against helm v4.2.0 AND the v4.3.1 this
+      # job pins. NOTHING adds a `v`.
+      - name: Package and push
+        id: push
+        env:
+          CHART_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          name=$(yq '.name' "${CHART_PATH}/Chart.yaml")
+          helm package "${CHART_PATH}" --version "${CHART_VERSION}" --destination /tmp
+          helm push "/tmp/${name}-${CHART_VERSION}.tgz" "${REGISTRY}"
+          echo "chart=${REGISTRY}/${name}:${CHART_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "pushed ${REGISTRY}/${name}:${CHART_VERSION}"
