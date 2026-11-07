@@ -16,6 +16,10 @@
 {{- $_ := set $bjwsValues "service" $service.service -}}
 {{- $serviceAccount := include "tunnel-operator.values.serviceaccount" . | fromYaml -}}
 {{- $_ := set $bjwsValues "serviceAccount" $serviceAccount.serviceAccount -}}
+{{- $rbac := include "tunnel-operator.values.rbac" . | fromYaml -}}
+{{- $_ := set $bjwsValues "rbac" $rbac.rbac -}}
+{{- $admission := include "tunnel-operator.values.admission" . | fromYaml -}}
+{{- $_ := set $bjwsValues "rawResources" $admission.rawResources -}}
 {{- $ctx := deepCopy . -}}
 {{- $_ := set $ctx "Values" $bjwsValues -}}
 {{ include "bjw-s.common.loader.all" $ctx }}
