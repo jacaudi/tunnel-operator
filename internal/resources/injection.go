@@ -36,7 +36,8 @@ const (
 	VolumeToken = "wg-token"
 )
 
-// ClientRoleName names both the client ClusterRole as rendered by the chart (the config/ name
-// operator-client plus the release's tunnel- prefix) and the RoleBinding the operator creates to it in
-// each namespace with injected pods. It is literal because the operator writes the RoleBinding at runtime.
+// ClientRoleName names both the client ClusterRole and the RoleBinding the operator creates to it in
+// each namespace with injected pods. The chart names the role with forceRename: tunnel-operator-client;
+// config/default renders it as namePrefix tunnel- plus operator-client. It is literal because the
+// operator writes the RoleBinding at runtime.
 const ClientRoleName = "tunnel-operator-client"

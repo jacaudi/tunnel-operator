@@ -11,7 +11,8 @@ side, not in place.
 1. **Install this fork alongside upstream.** The two do not collide: the CRD groups differ, every
    ClusterRole, ClusterRoleBinding and admission policy this fork installs carries the `tunnel-`
    prefix, and its CRDs are named by the new group, and the leader-election leases differ. Follow
-   [installation.md](installation.md); it applies to the `tunnel-system` namespace by default.
+   [installation.md](installation.md). The Helm chart installs into the namespace passed with `-n`
+   (`network` in these docs); the from-source path defaults to `tunnel-system`.
 2. **Create the new `Wireguard`** under `vpn.tunnel-operator.io/v1alpha1`. Never give it the same
    name in the same namespace as an upstream one: both operators derive `<name>-dep`, `<name>-svc`
    and the Secret `<name>` from it and set a controller `ownerReference` on them, so they would

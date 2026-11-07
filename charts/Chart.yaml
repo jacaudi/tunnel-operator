@@ -1,6 +1,6 @@
 apiVersion: v2
 name: tunnel-operator
-description: A Kubernetes operator that injects a WireGuard VPN gateway sidecar into labelled pods
+description: A Kubernetes operator that runs a WireGuard gateway egressing through gluetun, and injects a client sidecar into labelled pods
 type: application
 kubeVersion: ">=1.34.0-0"
 version: 0.1.0  # x-release-please-version

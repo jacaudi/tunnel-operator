@@ -45,15 +45,6 @@ The chart has six values; everything else is fixed.
 | `agent.image.repository` | `ghcr.io/jacaudi/tunnel-operator/agent` | The agent's image repository. The manager injects this image as the client sidecar and runs it in every server pod; the chart passes it as `--agent-image`. |
 | `agent.image.tag` | `""` | The agent's image tag. Empty means `v` plus the chart's `appVersion`. |
 
-For example, to pin the manager to a different image tag:
-
-<!-- x-release-please-start-version -->
-```sh
-helm install tunnel-operator oci://ghcr.io/jacaudi/charts/tunnel-operator --version 0.1.0 -n network --create-namespace \
-  --set manager.image.tag=v0.1.0
-```
-<!-- x-release-please-end -->
-
 ## Install from source
 
 The developer path: it builds the manifests from this checkout with kustomize and needs Go 1.26 and

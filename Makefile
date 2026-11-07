@@ -14,7 +14,7 @@ $(LOCALBIN):
 # re-runs its installer, and kustomize's refuses outright:
 #   .../bin/kustomize exists. Remove it first.
 # ci-lint.yml runs `make manifests generate`, which installs controller-gen; a
-# later target that needs kustomize (update-agent-image, run-e2e) would hit that
+# later target that needs kustomize (update-agent-image) would hit that
 # refusal if its prerequisite were not order-only. Order-only means "ensure the
 # directory exists" without comparing timestamps against it.
 
