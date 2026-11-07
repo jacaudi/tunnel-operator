@@ -1,0 +1,16 @@
+tunnel-operator is installed in the "{{ .Release.Namespace }}" namespace.
+
+The gateway pods need NET_ADMIN, so the namespace you run them in must allow the
+privileged Pod Security level:
+
+  kubectl label namespace {{ .Release.Namespace }} pod-security.kubernetes.io/enforce=privileged
+
+To route a pod through a gateway, give it the label:
+
+  tunnel-operator.io/enabled: "true"
+
+A Wireguard in the release namespace ("{{ .Release.Namespace }}") annotated
+
+  tunnel-operator.io/default: "true"
+
+is the default gateway for those pods.

@@ -1,0 +1,15 @@
+manager:
+  image:
+    repository: ghcr.io/jacaudi/tunnel-operator/manager
+    # Overrides the image tag (default is "v" + the chart appVersion).
+    tag: ""
+    pullPolicy: IfNotPresent
+  # Empty uses requests 10m/64Mi and limits 500m/128Mi (config/manager/manager.yaml).
+  resources: {}
+
+# The agent is the injected sidecar; the manager is told which image to inject.
+agent:
+  image:
+    repository: ghcr.io/jacaudi/tunnel-operator/agent
+    # Overrides the image tag (default is "v" + the chart appVersion).
+    tag: ""

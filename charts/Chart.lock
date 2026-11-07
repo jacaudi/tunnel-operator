@@ -1,0 +1,6 @@
+dependencies:
+- name: common
+  repository: oci://ghcr.io/bjw-s-labs/helm
+  version: 5.3.0
+digest: sha256:33e71eb7b167a6b79260c5c9dcc331533cdd92a05e700b9a5bc542a43e558392
+generated: "2026-11-07T07:41:10.180522-08:00"
