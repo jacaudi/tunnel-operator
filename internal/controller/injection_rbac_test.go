@@ -133,15 +133,21 @@ func managerRole(t *testing.T) rbacv1.ClusterRole {
 
 // The manager's `bind` grant is how it may create the RoleBinding to the client ClusterRole without
 // holding the client's permissions itself (escalation prevention): it must name that ClusterRole and
-// nothing else. The name must also exist as rendered, which scripts/chart-invariants.sh checks.
+// nothing else. Every ClusterRole the chart ships is scanned, because the client role is bound in every
+// namespace with injected pods, so a bind grant on any of them escalates for every workload. The name
+// must also exist as rendered, which scripts/chart-invariants.sh checks.
 func TestRoleGrantsBindOnlyOnTheClientRole(t *testing.T) {
 	var bindNames []string
-	for _, r := range managerRole(t).Rules {
-		if slices.Contains(r.Verbs, "bind") {
-			if !slices.Equal(r.Resources, []string{"clusterroles"}) {
-				t.Errorf("a bind rule on %v, want only clusterroles", r.Resources)
+	for _, path := range []string{"config/rbac/role.yaml", "config/rbac/client_clusterrole.yaml", "config/rbac/metrics_reader_clusterrole.yaml"} {
+		for _, role := range configClusterRoles(t, path) {
+			for _, r := range role.Rules {
+				if slices.Contains(r.Verbs, "bind") {
+					if !slices.Equal(r.Resources, []string{"clusterroles"}) {
+						t.Errorf("%s: %s has a bind rule on %v, want only clusterroles", path, role.Name, r.Resources)
+					}
+					bindNames = append(bindNames, r.ResourceNames...)
+				}
 			}
-			bindNames = append(bindNames, r.ResourceNames...)
 		}
 	}
 	if !slices.Equal(bindNames, []string{resources.ClientRoleName}) {
