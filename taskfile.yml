@@ -81,6 +81,14 @@ tasks:
       - task: repo:ci
       - task: go:ci
       - task: chart:ci
+      # The four chart steps ci-lint.yml runs after chart lint/template. They are
+      # scripts, so this file only invokes them. chart-invariants.sh with no
+      # argument renders config/default, which needs bin/kustomize.
+      - make kustomize
+      - sh scripts/chart-invariants.sh
+      - sh tests/chart-invariants-test.sh
+      - sh tests/chart-release-version-test.sh
+      - sh tests/chart-render-test.sh
 
   lint:
     desc: Static checks only — no tests

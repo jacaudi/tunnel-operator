@@ -1,6 +1,8 @@
 #!/usr/bin/env sh
 # Asserts `helm template` renders the manager Deployment, the two
-# ServiceAccounts and the metrics Service the operator needs to start.
+# ServiceAccounts and the metrics Service the operator needs to start, the
+# exact 15-object set, the CRDs and their keep annotation, the RBAC rules
+# against config/rbac, and the VAP/VAPB specs against config/admission.
 #
 # WHY THESE FIELDS: each one is a way the manager silently fails to run or
 # fails to reach the API. automountServiceAccountToken defaults to FALSE in
