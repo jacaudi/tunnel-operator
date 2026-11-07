@@ -17,7 +17,7 @@
 #
 # kubectl comes from the runner image, not a pinned action. `make run-e2e` only
 # needs one on PATH, and pinning it would add an action for no present
-# requirement.
+# requirement. Helm is pinned (below): the suite installs the chart with it.
 #
 # The suite FAILS, never skips, when its environment is missing or setup breaks:
 # a skipped e2e stage would let `ci` go green having proved nothing.
@@ -50,6 +50,14 @@ jobs:
 
       - name: Build images
         run: make docker-build-integration-test MANAGER_IMAGE="${MANAGER_IMAGE}" AGENT_IMAGE="${AGENT_IMAGE}"
+
+      - name: Install Helm
+        # The same pin as ci-lint.yml and ci-chart.yml: the suite installs the
+        # operator with `helm install`, and one Helm runs everywhere.
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          # renovate: datasource=github-releases depName=helm/helm
+          version: v4.3.1
 
       # The runner uses the same scratch E2E_KUBECONFIG default as a local run, so
       # kind never writes to ~/.kube/config.
