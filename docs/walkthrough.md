@@ -15,11 +15,13 @@ cd tunnel-operator
 
 ## 1. Install the operator into `network`
 
+<!-- x-release-please-start-version -->
 ```sh
 helm install tunnel-operator oci://ghcr.io/jacaudi/charts/tunnel-operator --version 0.1.0 -n network --create-namespace
 kubectl label namespace network pod-security.kubernetes.io/enforce=privileged --overwrite
 kubectl -n network rollout status deployment/tunnel-operator-manager
 ```
+<!-- x-release-please-end -->
 
 The install already refuses labelled pods, before any gateway exists: the backstop policy comes
 with it.

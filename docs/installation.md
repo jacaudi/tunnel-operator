@@ -7,11 +7,13 @@ Check the [prerequisites](prerequisites.md) first.
 The chart is published to GHCR as an OCI artifact. Pin `--version`: the images and the chart share
 one version, and the chart's `appVersion` picks the matching images.
 
+<!-- x-release-please-start-version -->
 ```sh
 helm install tunnel-operator oci://ghcr.io/jacaudi/charts/tunnel-operator --version 0.1.0 -n network --create-namespace
 kubectl label namespace network pod-security.kubernetes.io/enforce=privileged --overwrite
 kubectl -n network rollout status deployment/tunnel-operator-manager
 ```
+<!-- x-release-please-end -->
 
 The label is the Pod Security step from the [prerequisites](prerequisites.md#pod-security-privileged):
 the gateway's server pod needs `NET_ADMIN`, so the operator's namespace must allow `privileged`. The
@@ -45,10 +47,12 @@ The chart has six values; everything else is fixed.
 
 For example, to pin the manager to a different image tag:
 
+<!-- x-release-please-start-version -->
 ```sh
 helm install tunnel-operator oci://ghcr.io/jacaudi/charts/tunnel-operator --version 0.1.0 -n network --create-namespace \
   --set manager.image.tag=v0.1.0
 ```
+<!-- x-release-please-end -->
 
 ## Install from source
 
@@ -73,9 +77,11 @@ pod and every injected sidecar;
 [`config/default/manager_args_patch.yaml`](../config/default/manager_args_patch.yaml) sets it to
 `ghcr.io/jacaudi/tunnel-operator/agent:latest`.
 
+<!-- x-release-please-start-version -->
 CI publishes both images from `main` as `:latest` and `:sha-<short>`, and each release as
 `:v<version>` (for example `:v0.1.0`). Pin a `:v<version>` tag, or a `:sha-<short>` tag, for anything
 you want to keep stable.
+<!-- x-release-please-end -->
 
 > `make deploy` leaves `config/manager/kustomization.yaml` modified in your checkout. Run
 > `git restore config/manager/kustomization.yaml` afterwards if you want a clean tree.

@@ -71,6 +71,18 @@
         {
           "type": "generic",
           "path": "charts/Chart.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "README.md"
+        },
+        {
+          "type": "generic",
+          "path": "docs/installation.md"
+        },
+        {
+          "type": "generic",
+          "path": "docs/walkthrough.md"
         }
       ]
     }
