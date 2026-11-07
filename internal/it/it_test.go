@@ -572,7 +572,7 @@ metadata:
   namespace: tunnel-system
 spec:
   restartPolicy: Never
-  serviceAccountName: tunnel-metrics-reader
+  serviceAccountName: tunnel-operator-metrics-reader
   containers:
   - name: curl
     image: curlimages/curl:8.17.0
@@ -580,7 +580,7 @@ spec:
     args:
     - >
       TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token);
-      curl -sS -H "Authorization: Bearer $TOKEN" http://tunnel-controller-manager-metrics-service.tunnel-system.svc.cluster.local:8080/metrics |
+      curl -sS -H "Authorization: Bearer $TOKEN" http://tunnel-operator-metrics.tunnel-system.svc.cluster.local:8080/metrics |
       grep -E 'controller_runtime_reconcile_total|process_cpu_seconds_total'
 `
 		output, err := KubectlApply(controllerMetricsCheckPod, "tunnel-system")

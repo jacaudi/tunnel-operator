@@ -94,11 +94,6 @@ charts/*.tgz
 # kubebuilder test assets (predates the managed block)
 testbin/*
 
-# release_it.yaml is the throwaway manifest `make run-e2e` renders against a
-# kind cluster. ANCHORED with a leading slash: an unanchored pattern matches at
-# any depth, and would swallow a same-named file under .github/workflows/.
-/release_it.yaml
-
 # Session handoff prompts — scaffolding for a fresh Claude Code session, not
 # project artefacts.
 docs/prompts/

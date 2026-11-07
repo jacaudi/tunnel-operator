@@ -134,12 +134,7 @@ docker-build-integration-test:  docker-build-manager
 # E2E_KUBECONFIG=~/.kube/config to merge the test cluster into your own config.
 E2E_KUBECONFIG ?= /tmp/wg-e2e-kubeconfig
 run-e2e: $(KIND)
-	@for f in $(PINNED_AT_BUILD); do cp "$$f" "$$f.pre-build"; done
-	@trap 'for f in $(PINNED_AT_BUILD); do mv "$$f.pre-build" "$$f"; done' EXIT; \
-	  AGENT_IMAGE=${AGENT_IMAGE} $(MAKE) update-agent-image && \
-	  MANAGER_IMAGE=${MANAGER_IMAGE} $(MAKE) update-manager-image && \
-	  $(KUSTOMIZE) build config/default > release_it.yaml
-	KUBECONFIG=$(E2E_KUBECONFIG) KUBE_CONFIG=$(E2E_KUBECONFIG) KIND_BIN=${KIND} WIREGUARD_OPERATOR_RELEASE_PATH="../../release_it.yaml" AGENT_IMAGE=${AGENT_IMAGE} MANAGER_IMAGE=${MANAGER_IMAGE} SKIP_CLEANUP=${SKIP_CLEANUP} go test -tags=e2e ./internal/it/ -v -count=1 -timeout 25m
+	KUBECONFIG=$(E2E_KUBECONFIG) KUBE_CONFIG=$(E2E_KUBECONFIG) KIND_BIN=${KIND} TUNNEL_OPERATOR_CHART_PATH="../../charts" AGENT_IMAGE=${AGENT_IMAGE} MANAGER_IMAGE=${MANAGER_IMAGE} SKIP_CLEANUP=${SKIP_CLEANUP} go test -tags=e2e ./internal/it/ -v -count=1 -timeout 25m
 
 docker-push: ## Push docker image with the manager.
 	docker push ${IMG}
@@ -151,18 +146,6 @@ install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~
 
 uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config.
 	$(KUSTOMIZE) build config/crd | kubectl delete -f -
-
-# These two files are mutated in place by update-agent-image and
-# update-manager-image so a build can stamp release-time image pins into them,
-# then restored — they are not meant to carry those pins in the tree.
-#
-# RESTORED FROM A SAVED COPY, NOT `git checkout`. Both targets below used to run
-# `git checkout ./config/default/manager_args_patch.yaml`, which restores from the
-# INDEX and therefore silently discards any uncommitted edit to these files.
-# `make run-e2e` runs both targets, so a developer running the e2e locally
-# would lose in-progress work with no warning. Verified the hard way: it ate an
-# image-rename edit exactly that way while this branch was being written.
-PINNED_AT_BUILD := config/default/manager_args_patch.yaml config/manager/kustomization.yaml
 
 update-agent-image: kustomize
 	sed 's|$${AGENT_IMAGE}|$(AGENT_IMAGE)|g' ./config/default/manager_args_patch.yaml.template > ./config/default/manager_args_patch.yaml

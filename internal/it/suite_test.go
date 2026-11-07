@@ -33,7 +33,7 @@ import (
 // http://onsi.github.io/ginkgo/ to learn more about Ginkgo.
 
 var k8sClient client.Client
-var releasePath string
+var chartPath string
 var agentImage string
 var managerImage string
 var kindBinary string
@@ -196,6 +196,17 @@ func exitStderr(err error) string {
 	return ""
 }
 
+// splitImage splits an image reference into repository and tag at the last ":" after the last "/", so a
+// registry port ("host:5000/img:t") stays in the repository. A reference with no tag is an error.
+func splitImage(ref string) (repo, tag string, err error) {
+	slash := strings.LastIndex(ref, "/")
+	colon := strings.LastIndex(ref, ":")
+	if colon <= slash || colon == len(ref)-1 {
+		return "", "", fmt.Errorf("image %q has no tag", ref)
+	}
+	return ref[:colon], ref[colon+1:], nil
+}
+
 // clusterCreated is true once this run has created the kind cluster, so AfterSuite deletes only a
 // cluster the run owns.
 var clusterCreated bool
@@ -205,7 +216,7 @@ var _ = BeforeSuite(func() {
 		name string
 		dest *string
 	}{
-		{"WIREGUARD_OPERATOR_RELEASE_PATH", &releasePath},
+		{"TUNNEL_OPERATOR_CHART_PATH", &chartPath},
 		{"AGENT_IMAGE", &agentImage},
 		{"MANAGER_IMAGE", &managerImage},
 		{"KIND_BIN", &kindBinary},
@@ -284,32 +295,55 @@ var _ = BeforeSuite(func() {
 		Expect(err).NotTo(HaveOccurred(), "kind load docker-image %s: %s", image, exitStderr(err))
 	}
 
-	// simulate what users exactly do in real life.
-	b, err := exec.
-		Command("kubectl", "apply", "-f", releasePath, "--context", testKindContextName).
-		Output()
-	Expect(err).NotTo(HaveOccurred(), "kubectl apply -f %s: %s", releasePath, exitStderr(err))
+	// simulate what users exactly do in real life: helm install the chart. The chart's own bjw-s common
+	// dependency is fetched first, as it is not committed.
+	managerRepo, managerTag, err := splitImage(managerImage)
+	Expect(err).NotTo(HaveOccurred(), "split MANAGER_IMAGE")
+	agentRepo, agentTag, err := splitImage(agentImage)
+	Expect(err).NotTo(HaveOccurred(), "split AGENT_IMAGE")
 
-	expectedResources := []string{
-		"namespace/tunnel-system",
-		"customresourcedefinition.apiextensions.k8s.io/wireguardpeers.vpn.tunnel-operator.io",
-		"customresourcedefinition.apiextensions.k8s.io/wireguards.vpn.tunnel-operator.io",
-		"serviceaccount/tunnel-controller-manager",
-		"serviceaccount/tunnel-metrics-reader",
-		"role.rbac.authorization.k8s.io/tunnel-leader-election-role",
-		"clusterrole.rbac.authorization.k8s.io/tunnel-manager-role",
-		"clusterrole.rbac.authorization.k8s.io/tunnel-metrics-reader",
-		"clusterrole.rbac.authorization.k8s.io/tunnel-operator-client",
-		"rolebinding.rbac.authorization.k8s.io/tunnel-leader-election-rolebinding",
-		"clusterrolebinding.rbac.authorization.k8s.io/tunnel-manager-rolebinding",
-		"clusterrolebinding.rbac.authorization.k8s.io/tunnel-metrics-reader",
-		"service/tunnel-controller-manager-metrics-service",
-		"deployment.apps/tunnel-controller-manager",
-		"validatingadmissionpolicy.admissionregistration.k8s.io/tunnel-operator-require-injection",
-		"validatingadmissionpolicybinding.admissionregistration.k8s.io/tunnel-operator-require-injection",
+	for _, args := range [][]string{
+		{"dependency", "build", chartPath},
+		{
+			"install", "tunnel-operator", chartPath,
+			"-n", "tunnel-system", "--create-namespace", "--kube-context", testKindContextName,
+			"--wait", "--timeout", "5m",
+			"--set", "manager.image.repository=" + managerRepo, "--set", "manager.image.tag=" + managerTag,
+			"--set", "agent.image.repository=" + agentRepo, "--set", "agent.image.tag=" + agentTag,
+		},
+	} {
+		out, err := exec.Command("helm", args...).CombinedOutput()
+		Expect(err).NotTo(HaveOccurred(), "helm %s: %s", strings.Join(args, " "), out)
 	}
 
-	Expect(strings.Split(strings.Trim(strings.ReplaceAll(string(b), " created", ""), "\n"), "\n")).To(BeEquivalentTo(expectedResources))
+	clusterScoped := []string{
+		"namespace/tunnel-system",
+		"customresourcedefinition/wireguardpeers.vpn.tunnel-operator.io",
+		"customresourcedefinition/wireguards.vpn.tunnel-operator.io",
+		"clusterrole/tunnel-operator-manager",
+		"clusterrole/tunnel-operator-metrics-reader",
+		"clusterrole/tunnel-operator-client",
+		"clusterrolebinding/tunnel-operator-manager",
+		"clusterrolebinding/tunnel-operator-metrics-reader",
+		"validatingadmissionpolicy/tunnel-operator-require-injection",
+		"validatingadmissionpolicybinding/tunnel-operator-require-injection",
+	}
+	namespaced := []string{
+		"serviceaccount/tunnel-operator-manager",
+		"serviceaccount/tunnel-operator-metrics-reader",
+		"role/tunnel-operator-leader-election",
+		"rolebinding/tunnel-operator-leader-election",
+		"service/tunnel-operator-metrics",
+		"deployment.apps/tunnel-operator-manager",
+	}
+	for _, ref := range clusterScoped {
+		out, err := kubectl("", "get", ref)
+		Expect(err).NotTo(HaveOccurred(), "kubectl get %s: %s", ref, out)
+	}
+	for _, ref := range namespaced {
+		out, err := kubectl("", "get", "-n", "tunnel-system", ref)
+		Expect(err).NotTo(HaveOccurred(), "kubectl get -n tunnel-system %s: %s", ref, out)
+	}
 
 	err = v1alpha1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred(), "add the v1alpha1 scheme")
@@ -321,7 +355,7 @@ var _ = BeforeSuite(func() {
 	Eventually(func() int {
 		deploymentKey := types.NamespacedName{
 			Namespace: "tunnel-system",
-			Name:      "tunnel-controller-manager",
+			Name:      "tunnel-operator-manager",
 		}
 
 		deployment := &v12.Deployment{}
