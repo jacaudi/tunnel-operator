@@ -85,6 +85,65 @@ check 'Service metrics port' '{"name":"metrics","port":8080,"protocol":"TCP"}' "
 
 check 'no Namespace object' 0 "$(yq 'select(.kind == "Namespace") | .kind' "${out}" | wc -l | tr -d ' ')"
 
+
+# The whole object set, exactly: a missing object (the client ClusterRole, the
+# admission binding) or an extra one both fail here. Sorted in C locale on both
+# sides so the comparison never depends on the runner's collation.
+want_objects=$(printf '%s\n' \
+  ClusterRole/tunnel-operator-client \
+  ClusterRole/tunnel-operator-manager \
+  ClusterRole/tunnel-operator-metrics-reader \
+  ClusterRoleBinding/tunnel-operator-manager \
+  ClusterRoleBinding/tunnel-operator-metrics-reader \
+  CustomResourceDefinition/wireguardpeers.vpn.tunnel-operator.io \
+  CustomResourceDefinition/wireguards.vpn.tunnel-operator.io \
+  Deployment/tunnel-operator-manager \
+  Role/tunnel-operator-leader-election \
+  RoleBinding/tunnel-operator-leader-election \
+  Service/tunnel-operator-metrics \
+  ServiceAccount/tunnel-operator-manager \
+  ServiceAccount/tunnel-operator-metrics-reader \
+  ValidatingAdmissionPolicy/tunnel-operator-require-injection \
+  ValidatingAdmissionPolicyBinding/tunnel-operator-require-injection | LC_ALL=C sort)
+got_objects=$(yq -N 'select(.kind != null) | .kind + "/" + .metadata.name' "${out}" | LC_ALL=C sort)
+check 'rendered object set' "${want_objects}" "${got_objects}"
+
+# CRDs: kept on uninstall, and exactly the set in config/crd/bases (both ways,
+# so a CRD added to config/ but not synced fails).
+crd='.kind == "CustomResourceDefinition"'
+check 'CRD names match config/crd/bases' \
+  "$(yq -N '.metadata.name' config/crd/bases/*.yaml | LC_ALL=C sort)" \
+  "$(yq -N "select(${crd}) | .metadata.name" "${out}" | LC_ALL=C sort)"
+for n in wireguardpeers wireguards; do
+  check "CRD ${n} resource-policy keep" '"keep"' \
+    "$(q "${out}" "${crd} and .metadata.name == \"${n}.vpn.tunnel-operator.io\"" '.metadata.annotations["helm.sh/resource-policy"]')"
+done
+
+# $1 config/ source file, $2 yq expression: its rules or spec, normalised
+# exactly like q().
+src() {
+  yq -o=json -I=0 "$2 | sort_keys(..)" "$1"
+}
+
+check 'ClusterRole manager rules' "$(src config/rbac/role.yaml .rules)" \
+  "$(q "${out}" '.kind == "ClusterRole" and .metadata.name == "tunnel-operator-manager"' .rules)"
+check 'Role leader-election rules' "$(src config/rbac/leader_election_role.yaml .rules)" \
+  "$(q "${out}" '.kind == "Role" and .metadata.name == "tunnel-operator-leader-election"' .rules)"
+check 'ClusterRole client rules' "$(src config/rbac/client_clusterrole.yaml .rules)" \
+  "$(q "${out}" '.kind == "ClusterRole" and .metadata.name == "tunnel-operator-client"' .rules)"
+check 'ClusterRole metrics-reader rules' "$(src config/rbac/metrics_reader_clusterrole.yaml .rules)" \
+  "$(q "${out}" '.kind == "ClusterRole" and .metadata.name == "tunnel-operator-metrics-reader"' .rules)"
+
+check 'ClusterRoleBinding manager subjects' '[{"kind":"ServiceAccount","name":"tunnel-operator-manager","namespace":"render-test"}]' \
+  "$(q "${out}" '.kind == "ClusterRoleBinding" and .metadata.name == "tunnel-operator-manager"' .subjects)"
+check 'ClusterRoleBinding manager roleRef' '{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"tunnel-operator-manager"}' \
+  "$(q "${out}" '.kind == "ClusterRoleBinding" and .metadata.name == "tunnel-operator-manager"' .roleRef)"
+
+check 'VAP spec' "$(src config/admission/require_injection_policy.yaml .spec)" \
+  "$(q "${out}" '.kind == "ValidatingAdmissionPolicy"' .spec)"
+check 'VAPB spec' "$(src config/admission/require_injection_binding.yaml '.spec | .policyName = "tunnel-operator-require-injection"')" \
+  "$(q "${out}" '.kind == "ValidatingAdmissionPolicyBinding"' .spec)"
+
 helm template "${rel}" "${chart}" -n "${ns}" \
   --set manager.image.tag=t1 --set agent.image.repository=r/a --set agent.image.tag=t2 > "${out2}"
 check 'override manager image tag' '"ghcr.io/jacaudi/tunnel-operator/manager:t1"' "$(q "${out2}" "${dep}" "${c}.image")"
