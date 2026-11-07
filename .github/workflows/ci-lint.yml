@@ -200,8 +200,7 @@ jobs:
 
       - name: Install kustomize
         # chart-invariants.sh renders config/default with bin/kustomize to compare
-        # it against the chart, and nothing earlier in this job fetches it (the
-        # release.yaml drift step that used to is gone).
+        # it against the chart, and nothing earlier in this job fetches it.
         run: make kustomize
 
       - name: Resolve chart dependencies

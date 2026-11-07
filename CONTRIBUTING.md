@@ -34,7 +34,8 @@ make docker-build-integration-test MANAGER_IMAGE=tunnel-operator/manager:test AG
 make run-e2e MANAGER_IMAGE=tunnel-operator/manager:test AGENT_IMAGE=tunnel-operator/agent:test
 ```
 
-The tier needs Docker and `kubectl`. It creates a kind cluster named `wg-kind-test` and deletes it
+The tier needs Docker, `kubectl` and `helm` (v4) on `PATH`, and network access for
+`helm dependency build`. It creates a kind cluster named `wg-kind-test` and deletes it
 when the run ends. The default `E2E_KUBECONFIG` is a scratch file, `/tmp/wg-e2e-kubeconfig`, so
 kind never edits `~/.kube/config`; set it to `~/.kube/config` to merge the cluster into your config.
 `SKIP_CLEANUP=1` keeps the cluster for debugging, and the next run then fails at create until

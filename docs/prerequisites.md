@@ -52,8 +52,11 @@ The operator never relaxes Pod Security itself.
 ## Workstation
 
 - **`kubectl`** pointed at the cluster.
-- **Go 1.26 and `make`** — `make deploy` regenerates the CRDs and RBAC and downloads
-  `controller-gen` and `kustomize` into `./bin`. See [installation.md](installation.md).
+- **Helm 4** (tested with 4.3.1) — installs the operator from its OCI chart. See
+  [installation.md](installation.md#install-with-helm-oci).
+- **Go 1.26 and `make`** — only to install from source: `make deploy` regenerates the CRDs and RBAC
+  and downloads `controller-gen` and `kustomize` into `./bin`. See
+  [installation.md](installation.md#install-from-source).
 - **Docker** — only to build your own images.
 - **`wireguard-tools`** — only for `wg genkey` / `wg pubkey`, when you register a peer by hand.
 
