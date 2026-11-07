@@ -49,6 +49,7 @@ namespaces that run the gateway and tunnelled pods. Details:
 
 **1. Install the operator into `network`.** The clone is for step 2's example file:
 
+<!-- x-release-please-start-version -->
 ```sh
 git clone https://github.com/jacaudi/tunnel-operator.git
 cd tunnel-operator
@@ -56,6 +57,7 @@ helm install tunnel-operator oci://ghcr.io/jacaudi/charts/tunnel-operator --vers
 kubectl label namespace network pod-security.kubernetes.io/enforce=privileged --overwrite
 kubectl -n network rollout status deployment/tunnel-operator-manager
 ```
+<!-- x-release-please-end -->
 
 **2. Create the default gateway.** Copy [`examples/01-server.yaml`](examples/01-server.yaml) out of the
 clone, so your provider key never sits in it (`cp examples/01-server.yaml ~/vpn-gateway.yaml`). Set
