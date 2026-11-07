@@ -44,8 +44,8 @@ these two targets as the required `e2e` stage.
 ## Generated artifacts
 
 Never hand-edit `zz_generated.deepcopy.go` or anything under `config/crd/bases` — regenerate
-instead. `release.yaml` is produced by `make generate-release-file`, and CI fails the build when it
-drifts from `config/`.
+instead. The chart's CRDs and RBAC are copied from `config/` by `hack/sync-helm-crds.sh` and
+`hack/generate-helm-rbac.sh`, and CI fails the build when `charts/` drifts from them.
 
 ## Commit messages
 

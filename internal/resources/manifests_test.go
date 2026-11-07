@@ -10,7 +10,6 @@ import (
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/yaml"
 )
 
@@ -89,23 +88,5 @@ func TestRequireInjectionManifestsMatchTheGoConstants(t *testing.T) {
 	}
 	if policy.Spec.FailurePolicy == nil || *policy.Spec.FailurePolicy != admissionregistrationv1.Fail {
 		t.Errorf("policy failurePolicy = %v, want Fail", policy.Spec.FailurePolicy)
-	}
-}
-
-// kustomize prefixes the policy's name but does not rewrite the binding's policyName unless told to
-// (config/admission/kustomizeconfig.yaml). A binding that names a missing policy is ignored by the
-// apiserver, which would leave labelled pods unchecked. release.yaml is the rendered output.
-func TestReleaseBindingNamesThePrefixedPolicy(t *testing.T) {
-	var policy, binding string
-	for _, u := range decodeAll[unstructured.Unstructured](t, "release.yaml") {
-		switch u.GetKind() {
-		case "ValidatingAdmissionPolicy":
-			policy = u.GetName()
-		case "ValidatingAdmissionPolicyBinding":
-			binding, _, _ = unstructured.NestedString(u.Object, "spec", "policyName")
-		}
-	}
-	if policy == "" || binding != policy {
-		t.Errorf("release.yaml binding policyName = %q, want the policy's rendered name %q", binding, policy)
 	}
 }

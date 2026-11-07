@@ -58,12 +58,11 @@ ignore: |
   # findings, 136 of them indentation inside config/ alone.
   #
   # Fixing them does not stick. `make manifests` regenerates config/crd/bases
-  # and config/rbac/role.yaml, `make generate-release-file` regenerates
-  # release.yaml — so a hand-reindented
+  # and config/rbac/role.yaml, and `hack/sync-helm-crds.sh` and
+  # `hack/generate-helm-rbac.sh` copy them into the chart — so a hand-reindented
   # file is undone by the next codegen run, and the drift gate in ci-test would
   # then fail on the difference.
   #
   # Deliberately NOT ignored: examples/ and .github/, which are hand-written and
   # were fixed rather than exempted.
   config/
-  release.yaml

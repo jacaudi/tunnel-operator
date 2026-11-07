@@ -90,10 +90,10 @@ func TestDesiredClientRoleBinding(t *testing.T) {
 	}
 }
 
-// releaseClusterRoles returns every ClusterRole of release.yaml.
-func releaseClusterRoles(t *testing.T) []rbacv1.ClusterRole {
+// configClusterRoles returns every ClusterRole of path, relative to the repository root.
+func configClusterRoles(t *testing.T, path string) []rbacv1.ClusterRole {
 	t.Helper()
-	f, err := os.Open("../../release.yaml")
+	f, err := os.Open("../../" + path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,28 +119,30 @@ func releaseClusterRoles(t *testing.T) []rbacv1.ClusterRole {
 	}
 }
 
-// The client ClusterRole's rendered name, the RoleBinding's roleRef and the manager's `bind` grant must
-// all be one string. kustomize adds the tunnel- prefix to the first, not to resourceNames in a rule,
-// so the grant carries the already-prefixed name. If any of the three drifts, the manager cannot create
-// the RoleBinding (escalation prevention) and no labelled pod can reach the apiserver.
-func TestReleaseGrantsBindOnTheRenderedClientRole(t *testing.T) {
-	var clientRole string
-	var bindNames []string
-	for _, role := range releaseClusterRoles(t) {
-		if role.Name == resources.ClientRoleName {
-			clientRole = role.Name
-		}
-		for _, r := range role.Rules {
-			if slices.Contains(r.Verbs, "bind") {
-				if !slices.Equal(r.Resources, []string{"clusterroles"}) {
-					t.Errorf("a bind rule on %v, want only clusterroles", r.Resources)
-				}
-				bindNames = append(bindNames, r.ResourceNames...)
-			}
+// managerRole returns the ClusterRole kubebuilder generates for the manager, before the chart names it.
+func managerRole(t *testing.T) rbacv1.ClusterRole {
+	t.Helper()
+	for _, role := range configClusterRoles(t, "config/rbac/role.yaml") {
+		if role.Name == "manager-role" {
+			return role
 		}
 	}
-	if clientRole == "" {
-		t.Errorf("release.yaml has no ClusterRole named %s", resources.ClientRoleName)
+	t.Fatal("config/rbac/role.yaml has no ClusterRole named manager-role")
+	return rbacv1.ClusterRole{}
+}
+
+// The manager's `bind` grant is how it may create the RoleBinding to the client ClusterRole without
+// holding the client's permissions itself (escalation prevention): it must name that ClusterRole and
+// nothing else. The name must also exist as rendered, which scripts/chart-invariants.sh checks.
+func TestRoleGrantsBindOnlyOnTheClientRole(t *testing.T) {
+	var bindNames []string
+	for _, r := range managerRole(t).Rules {
+		if slices.Contains(r.Verbs, "bind") {
+			if !slices.Equal(r.Resources, []string{"clusterroles"}) {
+				t.Errorf("a bind rule on %v, want only clusterroles", r.Resources)
+			}
+			bindNames = append(bindNames, r.ResourceNames...)
+		}
 	}
 	if !slices.Equal(bindNames, []string{resources.ClientRoleName}) {
 		t.Errorf("bind grants resourceNames %v, want exactly [%s]", bindNames, resources.ClientRoleName)
@@ -150,22 +152,17 @@ func TestReleaseGrantsBindOnTheRenderedClientRole(t *testing.T) {
 // The operator writes exactly one RoleBinding name per namespace and one policy and binding name, so its
 // grants on those resources name them: a compromised operator cannot rewrite anyone else's RoleBinding
 // or admission policy. Reads are by that name too, which is why the RoleBinding cache selects on it.
-func TestReleaseGrantsOnlyTheNamesTheOperatorManages(t *testing.T) {
+func TestRoleGrantsOnlyTheNamesTheOperatorManages(t *testing.T) {
 	grants := map[string][]string{} // resource -> resourceNames, across all rules naming it
 	verbs := map[string][]string{}
-	for _, role := range releaseClusterRoles(t) {
-		if role.Name != "tunnel-manager-role" {
-			continue
-		}
-		for _, r := range role.Rules {
-			for _, res := range r.Resources {
-				switch res {
-				case "rolebindings", "mutatingadmissionpolicies", "mutatingadmissionpolicybindings":
-					grants[res] = append(grants[res], r.ResourceNames...)
-					verbs[res] = append(verbs[res], r.Verbs...)
-					if len(r.ResourceNames) == 0 {
-						t.Errorf("%s is granted for every name: %+v", res, r)
-					}
+	for _, r := range managerRole(t).Rules {
+		for _, res := range r.Resources {
+			switch res {
+			case "rolebindings", "mutatingadmissionpolicies", "mutatingadmissionpolicybindings":
+				grants[res] = append(grants[res], r.ResourceNames...)
+				verbs[res] = append(verbs[res], r.Verbs...)
+				if len(r.ResourceNames) == 0 {
+					t.Errorf("%s is granted for every name: %+v", res, r)
 				}
 			}
 		}
@@ -186,5 +183,27 @@ func TestReleaseGrantsOnlyTheNamesTheOperatorManages(t *testing.T) {
 				t.Errorf("%s grants %s, which the operator never uses", res, v)
 			}
 		}
+	}
+}
+
+// The client ClusterRole's name is written once in config/rbac/client_clusterrole.yaml and gets the
+// kustomize namePrefix, which the Go constant must equal: the operator binds that name at runtime.
+func TestClientClusterRoleIsNamedForTheConstant(t *testing.T) {
+	raw, err := os.ReadFile("../../config/default/kustomization.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kustomization struct {
+		NamePrefix string `json:"namePrefix"`
+	}
+	if err := yaml.Unmarshal(raw, &kustomization); err != nil {
+		t.Fatal(err)
+	}
+	roles := configClusterRoles(t, "config/rbac/client_clusterrole.yaml")
+	if len(roles) != 1 {
+		t.Fatalf("config/rbac/client_clusterrole.yaml has %d ClusterRoles, want 1", len(roles))
+	}
+	if got := kustomization.NamePrefix + roles[0].Name; got != resources.ClientRoleName {
+		t.Errorf("client ClusterRole is named %q, want resources.ClientRoleName %q", got, resources.ClientRoleName)
 	}
 }

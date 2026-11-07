@@ -13,10 +13,10 @@ $(LOCALBIN):
 # one tool updates bin/'s mtime, which makes every OTHER tool look stale — make
 # re-runs its installer, and kustomize's refuses outright:
 #   .../bin/kustomize exists. Remove it first.
-# ci-lint.yml reproduces that order exactly: `make manifests generate` installs
-# controller-gen, then the release.yaml drift gate calls generate-release-file,
-# which needs kustomize. Order-only means "ensure the directory exists" without
-# comparing timestamps against it.
+# ci-lint.yml runs `make manifests generate`, which installs controller-gen; a
+# later target that needs kustomize (update-agent-image, run-e2e) would hit that
+# refusal if its prerequisite were not order-only. Order-only means "ensure the
+# directory exists" without comparing timestamps against it.
 
 ## Tool Binaries
 KUSTOMIZE ?= $(LOCALBIN)/kustomize
@@ -159,9 +159,8 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 # RESTORED FROM A SAVED COPY, NOT `git checkout`. Both targets below used to run
 # `git checkout ./config/default/manager_args_patch.yaml`, which restores from the
 # INDEX and therefore silently discards any uncommitted edit to these files.
-# ci-lint.yml now runs generate-release-file on every push via
-# hack/release-file-drift.sh, so a developer reproducing the gate locally would
-# lose in-progress work with no warning. Verified the hard way: it ate an
+# `make run-e2e` runs both targets, so a developer running the e2e locally
+# would lose in-progress work with no warning. Verified the hard way: it ate an
 # image-rename edit exactly that way while this branch was being written.
 PINNED_AT_BUILD := config/default/manager_args_patch.yaml config/manager/kustomization.yaml
 
@@ -171,19 +170,6 @@ update-agent-image: kustomize
 update-manager-image: kustomize
 	$(info MANAGER_IMAGE: "$(MANAGER_IMAGE)")
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${MANAGER_IMAGE}
-
-# The two pin lines get release-please's generic-updater marker, so each release
-# PR rewrites them (release-please-config.json lists release.yaml under
-# extra-files). Anchored to exactly those lines: the `--agent-image=` arg and the
-# eight-space manager `image:`; hack/release-file-drift.sh strips the marker again.
-generate-release-file: kustomize
-	@for f in $(PINNED_AT_BUILD); do cp "$$f" "$$f.pre-build"; done
-	@trap 'for f in $(PINNED_AT_BUILD); do mv "$$f.pre-build" "$$f"; done' EXIT; \
-	  $(MAKE) update-agent-image update-manager-image && \
-	  $(KUSTOMIZE) build config/default > release.yaml.tmp && \
-	  sed -e 's|^\( *- --agent-image=.*\)$$|\1 # x-release-please-version|' \
-	      -e 's|^\(        image: .*\)$$|\1 # x-release-please-version|' \
-	      release.yaml.tmp > release.yaml && rm release.yaml.tmp
 
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}

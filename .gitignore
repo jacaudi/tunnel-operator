@@ -96,15 +96,7 @@ testbin/*
 
 # release_it.yaml is the throwaway manifest `make run-e2e` renders against a
 # kind cluster. ANCHORED with a leading slash: an unanchored pattern matches at
-# any depth, which is how an earlier `release.yaml` entry silently swallowed
-# .github/workflows/release.yaml.
-#
-# release.yaml IS DELIBERATELY NOT LISTED HERE. It is generated, but it is also
-# committed (each release PR bumps its image pins), so ci-lint.yml gates it
-# for drift against config/. It was previously both tracked AND ignored — inert,
-# because tracking wins, but a trap: the gate's own remediation is "regenerate
-# and commit", and a plain `git add release.yaml` against an ignored path is a
-# silent no-op.
+# any depth, and would swallow a same-named file under .github/workflows/.
 /release_it.yaml
 
 # Session handoff prompts — scaffolding for a fresh Claude Code session, not

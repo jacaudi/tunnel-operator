@@ -188,12 +188,6 @@ jobs:
           fi
           echo "generated files match the API types"
 
-      # release.yaml is committed (release-please bumps its pins) and is ALSO generated — from
-      # config/, by kustomize. See hack/release-file-drift.sh for why the image
-      # pins are read back out of the file instead of being passed in.
-      - name: Verify release.yaml is not stale
-        run: sh hack/release-file-drift.sh
-
       # --- Helm (chart repos only; a no-op otherwise) --------------------------
       - name: Resolve chart dependencies
         # Same script ci-chart.yml runs, so CI and local resolve identically.
