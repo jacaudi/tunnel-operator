@@ -125,7 +125,7 @@ type ClientRoleBindingReconciler struct {
 	refused sync.Map
 }
 
-// Every grant is named for the RoleBinding and ClusterRole the operator manages, as rendered in release.yaml
+// Every grant is named for the RoleBinding and ClusterRole the operator manages, as rendered by the chart
 // (see resources.ClientRoleName). kustomize does not prefix a rule's resourceNames, so the prefixed name is
 // written here. A list or watch authorized by name needs the metadata.name field selector CacheOptions sets.
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch

@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	// operatorNamespace is where release.yaml installs the operator, and so the only namespace whose
+	// operatorNamespace is where the chart installs the operator, and so the only namespace whose
 	// default-gateway annotation the operator honours.
 	operatorNamespace = "tunnel-system"
 	// appsNamespace holds the labelled workloads that attach to the gateway across a namespace boundary.

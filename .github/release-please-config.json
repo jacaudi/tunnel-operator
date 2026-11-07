@@ -70,7 +70,7 @@
       "extra-files": [
         {
           "type": "generic",
-          "path": "release.yaml"
+          "path": "charts/Chart.yaml"
         }
       ]
     }
