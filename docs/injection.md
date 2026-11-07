@@ -29,7 +29,7 @@ certificates.
 | Policy | Written by | Does |
 |---|---|---|
 | `tunnel-operator-inject` (`MutatingAdmissionPolicy`, and its binding) | The operator, at runtime | Inserts the sidecar into each labelled pod |
-| `tunnel-operator-require-injection` (`ValidatingAdmissionPolicy`, and its binding) | [`config/admission`](../config/admission), applied by `make deploy` | Rejects a labelled pod that does not carry the sidecar |
+| `tunnel-operator-require-injection` (`ValidatingAdmissionPolicy`, and its binding) | The Helm chart, generated from [`config/admission`](../config/admission); `make deploy` applies the source | Rejects a labelled pod that does not carry the sidecar |
 
 The second is the fail-closed backstop. It is installed with the operator, so it protects the cluster
 from install, before the operator has started, and it holds on a cluster that does not serve

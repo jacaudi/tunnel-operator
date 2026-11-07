@@ -10,7 +10,7 @@ New here? Start with the [Quick start in the root README](../README.md#quick-sta
 | Doc | What it covers |
 |---|---|
 | [Prerequisites](prerequisites.md) | Kubernetes version and flags, Pod Security, workstation tools, how to find `localCIDRs` and what the operator checks |
-| [Installation](installation.md) | Install from source, into another namespace, your own images, manager flags, uninstall |
+| [Installation](installation.md) | Install with Helm (OCI) and its values; install from source, into another namespace, your own images; manager flags; uninstall and reinstall |
 | [Walkthrough](walkthrough.md) | Empty cluster to a tunnelled workload: verify the exit IP, watch a labelled pod being refused, clean up |
 | [Architecture](architecture.md) | The two-resource model, the server pod, identity and addresses, injection, what is out of scope |
 | [`Wireguard` reference](crd-wireguard.md) | Server CRD: spec, status, conditions, owned objects, lifecycle |
@@ -45,11 +45,6 @@ New here? Start with the [Quick start in the root README](../README.md#quick-sta
   namespace; a static `ValidatingAdmissionPolicy` rejects any labelled pod that was not injected, and
   the operator keeps the client `RoleBinding` in namespaces that have labelled pods. See
   [injection.md](injection.md).
-
-## Not yet implemented (designed)
-
-- **OCI Helm chart** — install from source for now; see
-  [installation.md](installation.md#install-with-helm-oci).
 
 The design specs and implementation plans are working documents kept outside this repository, so
 the issue threads are where design intent gets shared.

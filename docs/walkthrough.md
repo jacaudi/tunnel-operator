@@ -16,15 +16,10 @@ cd tunnel-operator
 ## 1. Install the operator into `network`
 
 ```sh
-make kustomize
-(cd config/default && ../../bin/kustomize edit set namespace network)
-make deploy IMG=ghcr.io/jacaudi/tunnel-operator/manager:latest
+helm install tunnel-operator oci://ghcr.io/jacaudi/charts/tunnel-operator --version 0.1.0 -n network --create-namespace
 kubectl label namespace network pod-security.kubernetes.io/enforce=privileged --overwrite
-kubectl -n network rollout status deployment/tunnel-controller-manager
+kubectl -n network rollout status deployment/tunnel-operator-manager
 ```
-
-> **`make undeploy` deletes the install namespace and everything in it.** If `network` already holds
-> other workloads, see [installation.md](installation.md#install-into-another-namespace) first.
 
 The install already refuses labelled pods, before any gateway exists: the backstop policy comes
 with it.
@@ -143,13 +138,14 @@ The other refusals are listed in [injection.md](injection.md#rejections).
 ```sh
 kubectl -n default delete -f examples/injected-client.yaml
 kubectl label namespace default pod-security.kubernetes.io/enforce-
-make undeploy
+kubectl -n network delete -f ~/vpn-gateway.yaml
+helm uninstall tunnel-operator -n network
 kubectl delete mutatingadmissionpolicy,mutatingadmissionpolicybinding,rolebinding -A \
   -l app.kubernetes.io/managed-by=tunnel-operator
-git restore config/default/kustomization.yaml config/manager/kustomization.yaml
+kubectl label namespace network pod-security.kubernetes.io/enforce-
 rm ~/vpn-gateway.yaml
 ```
 
-`make undeploy` also deletes the `network` namespace; to keep it, use the
-[namespace-preserving command](installation.md#uninstall) instead. Run `git restore` last: uninstalling
-needs the namespace edit.
+`helm uninstall` leaves the `network` namespace and, by design, the two CRDs. To remove the CRDs
+too, and to reinstall under another release name or namespace, see
+[installation.md](installation.md#uninstall).

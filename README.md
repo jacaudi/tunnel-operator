@@ -43,24 +43,19 @@ through a ClusterIP Service.
 ## Quick start
 
 **Prerequisites:** Kubernetes 1.34 or later (on 1.34 and 1.35, with the `MutatingAdmissionPolicy`
-beta enabled), `kubectl`, Go 1.26 and `make`, and Pod Security `privileged` in the namespaces that
-run the gateway and tunnelled pods. Details: [docs/prerequisites.md](docs/prerequisites.md).
+beta enabled), `kubectl`, Helm 4 (tested with 4.3.1), and Pod Security `privileged` in the
+namespaces that run the gateway and tunnelled pods. Details:
+[docs/prerequisites.md](docs/prerequisites.md).
 
-**1. Install the operator into `network`** (Helm: not yet available):
+**1. Install the operator into `network`.** The clone is for step 2's example file:
 
 ```sh
 git clone https://github.com/jacaudi/tunnel-operator.git
 cd tunnel-operator
-make kustomize
-(cd config/default && ../../bin/kustomize edit set namespace network)
-make deploy IMG=ghcr.io/jacaudi/tunnel-operator/manager:latest
+helm install tunnel-operator oci://ghcr.io/jacaudi/charts/tunnel-operator --version 0.1.0 -n network --create-namespace
 kubectl label namespace network pod-security.kubernetes.io/enforce=privileged --overwrite
-kubectl -n network rollout status deployment/tunnel-controller-manager
+kubectl -n network rollout status deployment/tunnel-operator-manager
 ```
-
-> **`make undeploy` deletes the install namespace and everything in it.** If `network` already holds
-> other workloads, uninstall with the namespace-preserving command in
-> [docs/installation.md](docs/installation.md#uninstall).
 
 **2. Create the default gateway.** Copy [`examples/01-server.yaml`](examples/01-server.yaml) out of the
 clone, so your provider key never sits in it (`cp examples/01-server.yaml ~/vpn-gateway.yaml`). Set
@@ -133,8 +128,9 @@ Beyond the upstream project, this fork:
 - **Reconciles with Server-Side Apply** — the Service and Deployment converge on every reconcile,
   with field ownership migrated from the upstream manager.
 - **Publishes its own images** — `ghcr.io/jacaudi/tunnel-operator/{manager,agent}`, built from
-  the Go module `github.com/jacaudi/tunnel-operator`, with release automation (release-please →
-  SemVer tags and changelog). No release is published yet.
+  the Go module `github.com/jacaudi/tunnel-operator`. Releases are cut from `main` by release-please;
+  the images and the chart share one version, and the chart's `appVersion` picks the matching
+  images.
 
 Coming from upstream? Read [docs/upgrading-from-upstream.md](docs/upgrading-from-upstream.md).
 
