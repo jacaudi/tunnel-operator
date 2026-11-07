@@ -1,0 +1,21 @@
+{{- /* bjw-s common renders a Namespace from .Values.namespace and walks rbac/configMaps/secrets/persistence/ingress unconditionally; this dict bypasses the library defaults, so seed each. Helm owns the release namespace. */ -}}
+{{- $bjwsValues := dict
+  "global" (dict "alwaysAppendIdentifierToResourceName" true)
+  "namespace" (dict "create" false)
+  "configMaps" dict
+  "secrets" dict
+  "persistence" dict
+  "ingress" dict
+  "rbac" dict
+-}}
+{{- $security := include "tunnel-operator.values.security" . | fromYaml -}}
+{{- $_ := set $bjwsValues "defaultPodOptions" $security.defaultPodOptions -}}
+{{- $controllers := include "tunnel-operator.values.controllers" . | fromYaml -}}
+{{- $_ := set $bjwsValues "controllers" $controllers.controllers -}}
+{{- $service := include "tunnel-operator.values.service" . | fromYaml -}}
+{{- $_ := set $bjwsValues "service" $service.service -}}
+{{- $serviceAccount := include "tunnel-operator.values.serviceaccount" . | fromYaml -}}
+{{- $_ := set $bjwsValues "serviceAccount" $serviceAccount.serviceAccount -}}
+{{- $ctx := deepCopy . -}}
+{{- $_ := set $ctx "Values" $bjwsValues -}}
+{{ include "bjw-s.common.loader.all" $ctx }}
