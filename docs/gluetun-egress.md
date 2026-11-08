@@ -29,8 +29,8 @@ The operator owns the variables the routing and the egress API depend on. It ren
 `VPN_INTERFACE`, the firewall settings, `HEALTH_SERVER_ADDRESS`, `WIREGUARD_MTU`, the three
 `HTTP_CONTROL_SERVER_*` variables that lock down gluetun's control server, and
 `VPN_PORT_FORWARDING_LISTENING_PORT`, which it renders empty (11 variables in all; the full table
-is in [crd-wireguard.md](crd-wireguard.md#reserved-gluetun-variables)). If `env`, or the keys of a Secret
-that `envFrom` references, set any of them, the `Wireguard` is `Degraded` with reason
+is in [crd-wireguard.md](crd-wireguard.md#reserved-gluetun-variables)). If `env`, or the keys of a
+Secret that `envFrom` references, set any of them, the `Wireguard` is `Degraded` with reason
 `ReservedGluetunEnv` and no Deployment is rendered. A referenced ConfigMap is not checked, because
 the operator's value takes precedence.
 
@@ -92,8 +92,7 @@ nat     -A POSTROUTING -s <peerCIDR> -o tun0 -j MASQUERADE
 
 Peer traffic is masqueraded into gluetun's tunnel, never out of `eth0`. The agent re-asserts the
 routing and these rules after every state change and every 10 seconds, adding only a rule whose
-check fails, so a rule is never duplicated. The agent also owns four chains of its own, `TUNNEL-OP-*`
-(below). gluetun can flush these rules, for example when it
+check fails, so a rule is never duplicated. gluetun can flush these rules, for example when it
 restarts or rolls its firewall back; until the agent's next pass restores them (within 10 seconds,
 or sooner on a state change), two conditions matter:
 
@@ -132,11 +131,11 @@ filter  -A TUNNEL-OP-OUTPUT -o wg0 -s 10.8.0.1 -p tcp --sport 8081 -m conntrack 
 With no holder, or no port, the four DNAT and `FORWARD` lines are absent. The other two stay,
 because gluetun's `INPUT` and `OUTPUT` policies are `DROP`. On every pass the agent creates a
 missing chain, re-inserts a missing jump, and replaces the contents of the four chains in one
-`iptables-restore --noflush` call per table, whose input flushes and refills only the `TUNNEL-OP-*`
-chains. The chains therefore come back after gluetun flushes the firewall, and a stale rule is gone
-after the next pass. The agent does not touch gluetun's firewall variables: DNAT'd traffic crosses
-only `FORWARD`, which the agent's own chain accepts. A failure to assert these chains holds the pod
-not ready, as a failure of the rules above does.
+`iptables-restore --noflush` call, atomic per table, whose input flushes and refills only the
+`TUNNEL-OP-*` chains. The chains therefore come back after gluetun flushes the firewall, and a
+stale rule is gone after the next pass. The agent does not touch gluetun's firewall variables:
+DNAT'd traffic crosses only `FORWARD`, which the agent's own chain accepts. A failure to assert
+these chains holds the pod not ready, as a failure of the rules above does.
 
 ## Readiness follows the tunnel
 
@@ -223,11 +222,11 @@ wget -q -O- --post-data= http://10.8.0.1:8081/v1/cycle    # {"accepted":true}
 | `202` | `{"accepted":true}` | A cycle started. Its result appears in `lastCycle` when it finishes. |
 | `403` | `{"reason":"UnknownPeer",…}` | The caller is not an admitted peer of this gateway. |
 | `403` | `{"reason":"CycleNotAllowed",…}` | The caller is a peer, but its pod is not [allowed to cycle](#who-may-cycle-and-who-holds-the-port). |
-| `409` | `{"reason":"CycleInProgress","retryAfterSeconds":N,…}` | A cycle is running; `N` is what is left of its 150 s deadline, rounded up. |
+| `409` | `{"reason":"CycleInProgress","retryAfterSeconds":N,…}` | A cycle is running; `N` is what is left of its 150 s deadline, rounded up. While the agent restarts a stopped gluetun, `N` is 1. |
 | `409` | `{"reason":"CooldownActive","retryAfterSeconds":N,…}` | The last cycle stopped gluetun less than 60 s ago; `N` is the cooldown that is left. |
 
-gluetun's own control server is not exposed. It listens on `127.0.0.1:8000`, and only the agent can
-call it; see [gluetun's control server](#gluetuns-control-server).
+gluetun's own control server is not exposed to workloads; see
+[gluetun's control server](#gluetuns-control-server).
 
 ### Cycling the VPN
 
@@ -236,8 +235,8 @@ a new exit. **It interrupts all egress through this gateway for about 10 to 30 s
 connected** and nothing leaves any other way: the killswitch and the blackhole rule hold while
 gluetun is down.
 
-The agent runs the cycle in its own goroutine, so a caller's `202` does not wait for it, under one
-hard deadline of 150 s. It records one of these reasons in `lastCycle`:
+A caller's `202` does not wait for the cycle, which runs under one hard deadline of 150 s. The
+agent records one of these reasons in `lastCycle`:
 
 | Reason | Meaning |
 |---|---|
@@ -267,11 +266,10 @@ Any non-empty value that differs from the last one starts one cycle; the RFC 333
 only a convenient way to get a new value. The annotation value is also visible to every pod through
 the agent's `/egress` endpoint (see [Freshness](#freshness-of-status)), so put nothing secret in it.
 
-- **A value is handled once.** The agent records a value as handled when its cycle starts and
-  tells the operator, which writes it to `status.egress.lastHandledAnnotation`. An operator that is
-  down therefore never causes a cycle every 60 s. An agent restart after a cycle starts, but before
-  the operator has read the agent back (up to about 30 s), can run the same value once more; the
-  cooldown bounds that.
+- **A value is handled once.** The agent records a value as handled when its cycle starts, and
+  the operator writes it to `status.egress.lastHandledAnnotation`. An agent restart after a cycle
+  starts can run the same value once more, until the handled value has come back to the agent
+  through `state.json` (the 30 s poll plus the Secret sync); the cooldown bounds that.
 - **A value that arrives during a cycle or a cooldown is not lost.** It runs when the cycle or the
   cooldown ends.
 
@@ -283,10 +281,10 @@ runs separately, every 10 s. A cycle requested through the annotation therefore 
 Secret sync, which can take 1 to 2 minutes.
 
 **Reading the result.** The last cycle is in `status.egress.lastCycle`, with the trigger and both IPs.
-The `Cycled` condition mirrors it: `True` with reason `Succeeded`, otherwise `False` with the
-reason (`IPUnchanged`, `EmptyIP`, `Timeout` or `GluetunError`), or `Unknown` for a reason the
-operator does not recognise. The condition's message says nothing more; the trigger and IPs are only
-in `lastCycle`.
+The `Cycled` condition mirrors it: `True` with reason `Succeeded`, otherwise `False` with that
+reason (`IPUnchanged`, `EmptyIP`, `Timeout` or `GluetunError`), or `False` with reason `Unknown` for
+a reason the operator does not recognise. The condition's message says nothing more; the trigger
+and IPs are only in `lastCycle`.
 
 ### Who may cycle and who holds the port
 
@@ -300,16 +298,17 @@ A workload's pod opts in with labels on the **pod** (in a Deployment, its pod te
 **The namespace is the trust boundary.** Anyone who can create pods, or patch pod labels, in a
 namespace attached to the gateway can give a pod these labels, and so gets cycle rights and
 candidacy for the forwarded port. A same-namespace actor can also create a peer for a labelled pod
-before that pod's own sidecar registers. Attach only namespaces you trust to the gateway; set
+before that pod's own sidecar registers, and that peer's key, the actor's own, then holds the pod's
+cycle rights and port candidacy. Attach only namespaces you trust to the gateway; set
 [`allowedNamespaces.from: Same`](crd-wireguard.md#spec) to keep the gateway to its own namespace.
 
 The operator limits what a forged peer can claim. A label counts only when the peer is
 controller-owned by the live pod: the peer has the pod's name, its controlling ownerReference names
 that pod's current UID, and the pod is not terminating. The operator reads each peer's pod directly
 from the API server on every reconcile, and a label change takes effect on the next one, about 30 s
-for a Ready gateway, and then reaches the agent through the kubelet's Secret sync (up to 1 to 2
-minutes). A pod that is missing, replaced under the same name or terminating gets
-nothing.
+for a Ready gateway, and then reaches the agent through the kubelet's Secret sync (see
+[How soon the agent acts](#cycling-the-vpn)). A pod that is missing, replaced under the same name
+or terminating gets nothing.
 
 A transient error reading a client's pod, anything but NotFound, pauses that gateway's `state.json`
 updates until the read succeeds. That is deliberate: treating the pod as unverified would revoke
@@ -319,8 +318,8 @@ permissions that are live and could hand the port over.
 
 gluetun forwards a port natively for PIA, ProtonVPN, Perfect Privacy and PrivateVPN only. Turn it on
 in `spec.gluetun.env` with gluetun's own variable (`VPN_PORT_FORWARDING=on`). The provider assigns
-the port, and it changes on every tunnel-up: a cycle, a health restart, a reconnect. The agent
-follows it, and `status.egress.forwardedPort` shows the port in use.
+the port, which is re-obtained, and may change, on every tunnel-up: a cycle, a health restart, a
+reconnect. The agent follows it, and `status.egress.forwardedPort` shows the port in use.
 
 `spec.gluetun.portForwarding.staticPort` (1 to 65535) is for a provider or setup where the port is
 fixed, for example one the provider shows in its dashboard. When it is set, the agent forwards that
@@ -337,13 +336,14 @@ One pod at a time holds the port, and the agent sends TCP and UDP on it to that 
 
 - **The holder keeps the port** while it stays a candidate. Removing the label, deleting the pod or
   detaching it releases the port.
-- **Otherwise the oldest candidate wins**: by `creationTimestamp`, then name, then namespace.
+- **Otherwise the oldest candidate wins**: by the peer's `creationTimestamp`, then name, then namespace.
 - **Each candidate peer's `PortForwarding` condition says who won**: `True` with reason `Held` on
   the holder, and `False` with reason `HeldByAnotherPeer` on the others, naming the holder. See
-  [`WireguardPeer`](crd-wireguardpeer.md#conditions). `status.egress.forwardedPortPeer` names the
+  [`WireguardPeer`](crd-wireguardpeer.md#portforwarding). `status.egress.forwardedPortPeer` names the
   holder as `namespace/name`.
-- **A handover is not instant.** The agent learns the new holder through the kubelet's Secret sync,
-  so the old DNAT can live for about 1 to 2 minutes after a holder change.
+- **A handover is not instant.** The agent learns the new holder through the kubelet's Secret sync
+  (see [How soon the agent acts](#cycling-the-vpn)), so the old DNAT can outlive the change by that
+  lag.
 
 The holder's application must listen on the port on all addresses, not only on loopback: the DNAT'd
 packets arrive on `wg0` addressed to the holder's tunnel address. Replies are reversed by conntrack
@@ -363,8 +363,9 @@ The manager reads `status.egress` by polling each gateway pod, so it is not inst
   Ready or cannot be reached. A body over 1 MiB is a failed read and behaves the same way: stale,
   an Error logged, `Ready` unaffected.
 
-The `/egress` body is the snapshot above plus `lastHandledAnnotation`, and the same port answers the
-kubelet's probes, so any pod in the cluster can read it. The exit IP is not secret.
+The `/egress` body is the snapshot above without `forwardedPortHolder`, plus
+`lastHandledAnnotation`, and the same port answers the kubelet's probes, so any pod in the cluster
+can read it. The exit IP is not secret.
 
 ### gluetun's control server
 
@@ -383,6 +384,3 @@ reaches a workload, the `Wireguard` or its status.
   gateway pod after deleting the key.
 - **An empty `GLUETUN_API_KEY` does not stop the agent.** The API keeps serving, and every cycle
   fails as `GluetunError`.
-
-A `Wireguard` that sets any of the four newly reserved variables is `Degraded` with reason
-`ReservedGluetunEnv`.

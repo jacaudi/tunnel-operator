@@ -74,8 +74,9 @@ the pod and have the operator inject it; see [Sidecar injection](#sidecar-inject
   admits (a valid key and an address), the peer's name, namespace, `publicKey`, `wireguardRef` and
   `status.address`, sorted by name and then namespace — into the Secret's `state.json`, which
   the pod mounts. It also carries an `Egress` block: the tunnel addresses of the peers whose pods may
-  cycle the VPN, the holder of the forwarded port, `staticPort` and the cycle annotation. A peer
-  with no key, an invalid key, a key another peer holds, a namespace the server does not allow, an address conflict or no free address is left out. Other peer
+  cycle the VPN, the holder of the forwarded port, `staticPort`, the cycle annotation and
+  `lastHandledAnnotation`. A peer with no key, an invalid key, a key another peer holds, a namespace
+  the server does not allow, an address conflict or no free address is left out. Other peer
   metadata (labels, annotations, resourceVersion, managedFields) and the rest of the status never
   reach the file, so writing them does not rewrite the Secret. The agent watches the file and
   diffs it against the live device, adding, updating and removing peers by public key.
