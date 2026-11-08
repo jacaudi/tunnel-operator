@@ -3,10 +3,15 @@ package egress
 import (
 	"context"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/jacaudi/tunnel-operator/internal/resources"
 )
 
 const apiKey = "s3cret"
@@ -117,5 +122,34 @@ func TestPublicIPEmptyIsEmptyString(t *testing.T) {
 	}
 	if got != "" {
 		t.Errorf("PublicIP = %q, want the empty string (not yet known)", got)
+	}
+}
+
+// The operator renders gluetun's roles file from resources.GluetunAuthTOML; a route the client calls
+// but the role does not name returns 401 from gluetun, and a route the role names but nothing calls
+// is access the agent does not need. The two must list the same method and path pairs.
+func TestGluetunClientCallsExactlyTheRoutesTheRoleGrants(t *testing.T) {
+	called := map[string]bool{}
+	g := newGluetunClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called[r.Method+" "+r.URL.Path] = true
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	for _, c := range gluetunCalls {
+		if _, err := c.call(t.Context(), g); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+	}
+
+	line := regexp.MustCompile(`(?m)^routes = \[(.*)\]$`).FindSubmatch(resources.GluetunAuthTOML("k"))
+	if line == nil {
+		t.Fatal("GluetunAuthTOML has no routes line")
+	}
+	granted := map[string]bool{}
+	for _, m := range regexp.MustCompile(`"([^"]+)"`).FindAllSubmatch(line[1], -1) {
+		granted[string(m[1])] = true
+	}
+
+	if !maps.Equal(called, granted) {
+		t.Errorf("client calls %v, role grants %v; want the same set", slices.Sorted(maps.Keys(called)), slices.Sorted(maps.Keys(granted)))
 	}
 }

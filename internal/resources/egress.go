@@ -55,13 +55,12 @@ const (
 )
 
 // NewGluetunAPIKey returns a fresh API key for gluetun's control server: 32 random bytes in unpadded
-// base64url, 43 characters.
-func NewGluetunAPIKey() (string, error) {
+// base64url, 43 characters. crypto/rand.Read never returns an error as of Go 1.24: it crashes the
+// program if the system source fails, so there is nothing to handle.
+func NewGluetunAPIKey() string {
 	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("generate gluetun API key: %w", err)
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
+	rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 // GluetunAuthTOML renders gluetun's roles file: one role, for the agent, limited to the routes the

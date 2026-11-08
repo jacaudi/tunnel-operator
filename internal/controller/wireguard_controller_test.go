@@ -1760,8 +1760,7 @@ var _ = Describe("wireguard controller", func() {
 				Expect(first["privateKey"]).Should(Equal([]byte(privateKey.String())), "the WireGuard identity must survive")
 				Expect(first["publicKey"]).Should(Equal([]byte(privateKey.PublicKey().String())))
 
-				// Nothing watches Pods and the periodic requeue is far longer than Timeout, so reconciles
-				// after the first come from patching the Wireguard's annotation.
+				// Reconciles after the first come from patching the Wireguard's annotation: nothing else triggers one.
 				for i := range 3 {
 					Eventually(func() error {
 						live := &v1alpha1.Wireguard{}

@@ -439,15 +439,11 @@ func (r *WireguardReconciler) specProblem(ctx context.Context, wg *v1alpha1.Wire
 	return "", "", nil
 }
 
-// secretDiffers reports whether any key the operator renders into the server Secret differs from the
-// stored one. Keys the operator does not render are not compared.
-func secretDiffers(have, want map[string][]byte) bool {
-	for k, v := range want {
-		if !bytes.Equal(have[k], v) {
-			return true
-		}
-	}
-	return false
+// replaceSecret writes desired over current, conditionally on current's ResourceVersion: the Update
+// fails with a Conflict if the Secret has changed since current was read.
+func (r *WireguardReconciler) replaceSecret(ctx context.Context, current, desired *corev1.Secret) error {
+	desired.ResourceVersion = current.ResourceVersion
+	return r.Update(ctx, desired)
 }
 
 // +kubebuilder:rbac:groups=vpn.tunnel-operator.io,resources=wireguards,verbs=get;list;watch;create;update;patch;delete
@@ -552,15 +548,12 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, err
 		}
 
-		// The gluetun API key is generated once: a Secret that has one keeps it, so the agent's key and
-		// gluetun's roles file never fall out of step. The key is never logged.
+		// A key already stored is kept; one is generated only when the Secret has none. The read may be
+		// stale, so replaceSecret writes conditionally on the version read: a reconcile that missed the key
+		// conflicts rather than replacing it. The key is never logged.
 		gluetunAPIKey := string(secret.Data[resources.SecretKeyGluetunAPIKey])
 		if gluetunAPIKey == "" {
-			gluetunAPIKey, err = resources.NewGluetunAPIKey()
-			if err != nil {
-				log.Error(err, "Failed to generate gluetun API key")
-				return ctrl.Result{}, err
-			}
+			gluetunAPIKey = resources.NewGluetunAPIKey()
 		}
 
 		publicKey := string(secret.Data["publicKey"])
@@ -570,9 +563,12 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, err
 		}
 
-		if secretDiffers(secret.Data, updatedSecret.Data) {
+		if !maps.EqualFunc(secret.Data, updatedSecret.Data, bytes.Equal) {
 			log.Info("Updating secret with new config")
-			if err := r.Update(ctx, updatedSecret); err != nil {
+			if err := r.replaceSecret(ctx, secret, updatedSecret); errors.IsConflict(err) {
+				// The Secret changed since it was read; the next reconcile reads the new one.
+				return ctrl.Result{RequeueAfter: time.Second}, nil
+			} else if err != nil {
 				log.Error(err, "Failed to update secret with new config")
 				return ctrl.Result{}, err
 			}
@@ -616,11 +612,7 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		privateKey := key.String()
 		publicKey := key.PublicKey().String()
 
-		gluetunAPIKey, err := resources.NewGluetunAPIKey()
-		if err != nil {
-			log.Error(err, "Failed to generate gluetun API key")
-			return ctrl.Result{}, err
-		}
+		gluetunAPIKey := resources.NewGluetunAPIKey()
 
 		state := desiredState(wireguard, privateKey, admitted)
 

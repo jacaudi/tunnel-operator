@@ -76,9 +76,10 @@ type WireguardPodSpec struct {
 
 // GluetunSpec is passed through to the gluetun container. The operator renders the variables its
 // routing depends on (VPN_TYPE, VPN_INTERFACE, the firewall settings, HEALTH_SERVER_ADDRESS,
-// WIREGUARD_MTU, the HTTP_CONTROL_SERVER_* variables that lock gluetun's control server behind the
-// agent's key, and VPN_PORT_FORWARDING_LISTENING_PORT) and reports Degraded if env or a referenced
-// Secret sets one of them.
+// WIREGUARD_MTU, HTTP_CONTROL_SERVER_ADDRESS, HTTP_CONTROL_SERVER_AUTH_CONFIG_FILEPATH,
+// HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE and VPN_PORT_FORWARDING_LISTENING_PORT) and reports Degraded if
+// env or a referenced Secret sets one of them. Other HTTP_CONTROL_SERVER_* variables, such as
+// HTTP_CONTROL_SERVER_LOG, are not reserved.
 type GluetunSpec struct {
 	// Env is passed through to the gluetun container, after the variables the operator renders.
 	// +optional

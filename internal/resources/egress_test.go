@@ -54,14 +54,7 @@ apikey = "k"
 }
 
 func TestNewGluetunAPIKey(t *testing.T) {
-	a, err := NewGluetunAPIKey()
-	if err != nil {
-		t.Fatalf("NewGluetunAPIKey: %v", err)
-	}
-	b, err := NewGluetunAPIKey()
-	if err != nil {
-		t.Fatalf("NewGluetunAPIKey: %v", err)
-	}
+	a, b := NewGluetunAPIKey(), NewGluetunAPIKey()
 	// 32 random bytes in unpadded base64url.
 	if !regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`).MatchString(a) {
 		t.Errorf("NewGluetunAPIKey() = %q, want 43 base64url characters", a)
