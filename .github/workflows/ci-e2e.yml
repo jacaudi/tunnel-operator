@@ -33,7 +33,7 @@ jobs:
   e2e:
     name: e2e tests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       MANAGER_IMAGE: tunnel-operator/manager:test
       AGENT_IMAGE: tunnel-operator/agent:test

@@ -3,7 +3,9 @@
 package it
 
 import (
+	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"strings"
 
@@ -131,22 +133,66 @@ func routeLines(routes, prefix string) []string {
 // leakCounterRule is the leak counter's match: peer traffic leaving the gateway on eth0.
 var leakCounterRule = []string{"POSTROUTING", "-o", "eth0", "-s", "10.8.0.0/24"}
 
-// ensureLeakCounter adds the leak counter rule to the agent container of deploy/vpn-dep unless it is
-// already there (iptables -C, then -A).
-func ensureLeakCounter(g Gomega) {
-	if _, err := KubectlExec("deploy/vpn-dep", "agent", TestNamespace, append([]string{"iptables", "-t", "mangle", "-C"}, leakCounterRule...)...); err == nil {
+// ensureLeakCounter adds the leak counter rule to the agent container of deploy/vpn-dep in namespace
+// unless it is already there (iptables -C, then -A).
+func ensureLeakCounter(g Gomega, namespace string) {
+	if _, err := KubectlExec("deploy/vpn-dep", "agent", namespace, append([]string{"iptables", "-t", "mangle", "-C"}, leakCounterRule...)...); err == nil {
 		return
 	}
-	out, err := KubectlExec("deploy/vpn-dep", "agent", TestNamespace, append([]string{"iptables", "-t", "mangle", "-A"}, leakCounterRule...)...)
+	out, err := KubectlExec("deploy/vpn-dep", "agent", namespace, append([]string{"iptables", "-t", "mangle", "-A"}, leakCounterRule...)...)
 	g.Expect(err).NotTo(HaveOccurred(), "add the leak counter: %s", out)
 }
 
-// expectNoLeak asserts that the leak counter on deploy/vpn-dep reads [0:0].
-func expectNoLeak(g Gomega) {
-	save, err := KubectlExec("deploy/vpn-dep", "agent", TestNamespace, "iptables-save", "-c", "-t", "mangle")
+// expectNoLeak asserts that the leak counter on deploy/vpn-dep in namespace reads [0:0].
+func expectNoLeak(g Gomega, namespace string) {
+	save, err := KubectlExec("deploy/vpn-dep", "agent", namespace, "iptables-save", "-c", "-t", "mangle")
 	g.Expect(err).NotTo(HaveOccurred(), "iptables-save in vpn-dep: %s", save)
 	line := leakCounterLine(save)
 	g.Expect(line).To(HavePrefix("[0:0] "), "leak counter: %q", line)
+}
+
+// clientRBACManifests returns the ServiceAccount vpn-client and the RoleBinding to ClusterRole
+// tunnel-operator-client: the part of examples/client.yaml before its Deployment.
+func clientRBACManifests() string {
+	rbac, _, found := strings.Cut(clientManifests(agentImage), "apiVersion: apps/v1")
+	Expect(found).To(BeTrue(), "%s must carry its Deployment after the RBAC", clientExample)
+	return rbac
+}
+
+// egressClientManifest returns one Deployment name whose pod carries labels plus app: name, the
+// examples/client.yaml pod spec up to its app container (volumes and the wg-client sidecar, image set to
+// agentImage), serviceAccountName vpn-client, and one app container running busyboxImage with command
+// sh -c and args appArgs. The sidecar block is cut from the example, so the example is what runs.
+func egressClientManifest(name string, labels map[string]string, appArgs []string) string {
+	example := clientManifests(agentImage)
+	start := strings.Index(example, "      volumes:\n")
+	end := strings.Index(example, "      containers:\n")
+	Expect(start).To(BeNumerically(">", 0), "%s must carry the pod's volumes", clientExample)
+	Expect(end).To(BeNumerically(">", start), "%s must carry the app containers after its volumes and init containers", clientExample)
+
+	podLabels := map[string]string{"app": name}
+	maps.Copy(podLabels, labels)
+	labelsJSON, err := json.Marshal(podLabels)
+	Expect(err).NotTo(HaveOccurred())
+	argsJSON, err := json.Marshal(appArgs)
+	Expect(err).NotTo(HaveOccurred())
+
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata: {name: %[1]s, labels: {app: %[1]s}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: %[1]s}}
+  template:
+    metadata: {labels: %[2]s}
+    spec:
+      serviceAccountName: vpn-client
+%[3]s      containers:
+      - name: app
+        image: %[4]s
+        command: ["sh", "-c"]
+        args: %[5]s
+`, name, labelsJSON, example[start:end], busyboxImage, argsJSON)
 }
 
 // crossNamespaceClientManifests returns examples/client.yaml with its image placeholder replaced by

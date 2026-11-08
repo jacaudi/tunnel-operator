@@ -27,7 +27,7 @@ var _ = Describe("wireguard controller", func() {
 		Expect(err).NotTo(HaveOccurred(), "kubectl get service/exit: %s", exitIP)
 		Expect(exitIP).NotTo(BeEmpty())
 
-		output, err = KubectlApply(gatewayManifests(exitIP), TestNamespace)
+		output, err = KubectlApply(gatewayManifests(exitIP, 0), TestNamespace)
 		Expect(err).NotTo(HaveOccurred(), "apply the gateway: %s", output)
 		output, err = KubectlApply(testPeerManifests(), TestNamespace)
 		Expect(err).NotTo(HaveOccurred(), "apply the peer: %s", output)
@@ -209,7 +209,7 @@ var _ = Describe("wireguard controller", func() {
 			return kubectl("", "logs", "-n", TestNamespace, "canary", "-c", "echo")
 		}
 		leakCounter := func() {
-			Eventually(func(g Gomega) { ensureLeakCounter(g) }, Timeout, Interval).Should(Succeed())
+			Eventually(func(g Gomega) { ensureLeakCounter(g, TestNamespace) }, Timeout, Interval).Should(Succeed())
 		}
 		appFetchesExit := func(timeout time.Duration) {
 			Eventually(func(g Gomega) {
@@ -226,7 +226,7 @@ var _ = Describe("wireguard controller", func() {
 
 		exitIP := get(Default, "service/exit", "{.spec.clusterIP}")
 		Expect(exitIP).NotTo(BeEmpty())
-		output, err = KubectlApply(gatewayManifests(exitIP), TestNamespace)
+		output, err = KubectlApply(gatewayManifests(exitIP, 0), TestNamespace)
 		Expect(err).NotTo(HaveOccurred(), "apply the gateway: %s", output)
 		WaitForWireguardToBeReady("vpn", TestNamespace, GatewayTimeout)
 
@@ -326,7 +326,7 @@ var _ = Describe("wireguard controller", func() {
 		Expect(sidecar(Default, "deploy/app", "ip", "route", "get", "1.1.1.1")).To(ContainSubstring("dev wg0"))
 		Expect(sidecar(Default, "deploy/app", "ip", "link", "show", "wg0")).To(ContainSubstring("mtu 1320"))
 		inCluster()
-		expectNoLeak(Default)
+		expectNoLeak(Default, TestNamespace)
 
 		By("scenario (b): the exit node is gone")
 		output, err = KubectlPatch("deployment/exit", TestNamespace, "merge", `{"spec":{"replicas":0}}`)
@@ -341,7 +341,7 @@ var _ = Describe("wireguard controller", func() {
 			expectNeverNode(Default, body, err)
 		}
 		inCluster()
-		expectNoLeak(Default)
+		expectNoLeak(Default, TestNamespace)
 		output, err = KubectlPatch("deployment/exit", TestNamespace, "merge", `{"spec":{"replicas":1}}`)
 		Expect(err).NotTo(HaveOccurred(), "scale the exit node up: %s", output)
 		waitForDeploymentTobeReady("exit", TestNamespace, GatewayTimeout)
@@ -362,7 +362,7 @@ var _ = Describe("wireguard controller", func() {
 			body, err := appFetch()
 			expectNeverNode(Default, body, err)
 		}
-		expectNoLeak(Default)
+		expectNoLeak(Default, TestNamespace)
 		Eventually(func(g Gomega) {
 			g.Expect(get(g, "wireguard/vpn", `{.status.conditions[?(@.type=="Ready")].status}`)).To(Equal("False"))
 			g.Expect(get(g, "wireguard/vpn", `{.status.conditions[?(@.type=="Ready")].reason}`)).To(Equal("DeploymentNotReady"))
@@ -376,7 +376,7 @@ var _ = Describe("wireguard controller", func() {
 			body, err := appFetch()
 			expectNeverNode(Default, body, err)
 		}
-		expectNoLeak(Default)
+		expectNoLeak(Default, TestNamespace)
 		inCluster()
 		// The agent's re-assert loop restores its FORWARD rules; gluetun's own firewall stays rolled back until scenario (d) replaces the pod.
 		restored, err := KubectlExec("deploy/vpn-dep", "agent", TestNamespace, "ip", "rule", "add", "not", "fwmark", "51820", "lookup", "51820", "pref", "101")
@@ -385,6 +385,14 @@ var _ = Describe("wireguard controller", func() {
 		}
 		WaitForWireguardToBeReady("vpn", TestNamespace, GatewayTimeout)
 		appFetchesExit(GatewayTimeout)
+		// The flush and -X above deleted the agent's INPUT and OUTPUT chains and their jumps; the re-assert loop
+		// puts them back. This gateway has no forwarded-port holder, so only these two chains are checked here.
+		Eventually(func(g Gomega) {
+			for _, c := range []struct{ builtin, chain string }{{"INPUT", resources.ChainInput}, {"OUTPUT", resources.ChainOutput}} {
+				vpnAgent(g, "iptables", "-S", c.chain)
+				vpnAgent(g, "iptables", "-C", c.builtin, "-j", c.chain)
+			}
+		}, 15*time.Second, Interval).Should(Succeed())
 
 		By("scenario (d): the gateway pod is replaced")
 		vpnSelector := labels.SelectorFromSet(resources.LabelsForWireguard("vpn")).String()
@@ -404,7 +412,7 @@ var _ = Describe("wireguard controller", func() {
 		WaitForWireguardToBeReady("vpn", TestNamespace, GatewayTimeout)
 		leakCounter()
 		appFetchesExit(GatewayTimeout)
-		expectNoLeak(Default)
+		expectNoLeak(Default, TestNamespace)
 		inCluster()
 		Expect(restarts(Default, sidecarRestartsPath)).To(Equal(sidecarRestarts), "the sidecar restarted when the gateway pod was replaced")
 		Expect(restarts(Default, appRestartsPath)).To(Equal(appRestarts), "the app restarted when the gateway pod was replaced")
@@ -552,7 +560,7 @@ var _ = Describe("wireguard controller", func() {
 			g.Expect(err).NotTo(HaveOccurred(), "curl %s from app in %s: %s", fetchURL, otherNamespace, body)
 			g.Expect(body).To(Equal("exit"))
 		}, GatewayTimeout, Interval).Should(Succeed())
-		expectNoLeak(Default)
+		expectNoLeak(Default, TestNamespace)
 
 		// The client's ServiceAccount reads its own peers and nothing about the gateway.
 		serviceAccount := "system:serviceaccount:" + otherNamespace + ":vpn-client"
