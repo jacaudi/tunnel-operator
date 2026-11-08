@@ -21,10 +21,11 @@ const (
 	egressNamespace = "egress-e2e"
 	// egressForwardedPort is the staticPort the gateway forwards and the holder listens on, TCP and UDP.
 	egressForwardedPort = 51413
-	// holderScript listens on egressForwardedPort over TCP and UDP and answers each connection or datagram.
-	holderScript = "nc -lk -p 51413 -e echo tcp-ok & while true; do nc -u -l -p 51413 -e echo udp-ok; done"
-	readyPath    = `{.status.conditions[?(@.type=="Ready")].status}`
+	readyPath           = `{.status.conditions[?(@.type=="Ready")].status}`
 )
+
+// holderScript listens on egressForwardedPort over TCP and UDP and answers each connection or datagram.
+var holderScript = fmt.Sprintf("nc -lk -p %[1]d -e echo tcp-ok & while true; do nc -u -l -p %[1]d -e echo udp-ok; done", egressForwardedPort)
 
 // outsiderManifest is a busybox Pod with no tunnel, so it is outside the gateway's peer network.
 var outsiderManifest = fmt.Sprintf(`apiVersion: v1
@@ -122,10 +123,14 @@ var _ = Describe("egress API", func() {
 		gatewayIP, err := kubectl("", "get", "pods", "-n", ns, "-l", labels.SelectorFromSet(resources.LabelsForWireguard("vpn")).String(), "-o", "jsonpath={.items[0].status.podIP}")
 		Expect(err).NotTo(HaveOccurred(), "gateway pod IP: %s", gatewayIP)
 		Expect(gatewayIP).NotTo(BeEmpty())
+		// Positive control: the health port is open to every pod, so a pass shows the IP, the route and nc all work and
+		// only the egress API port is closed to this pod.
+		output, err = KubectlExec("pod/outsider", "sh", ns, "nc", "-w", "3", gatewayIP, fmt.Sprint(resources.HTTPPort))
+		Expect(err).NotTo(HaveOccurred(), "the outsider cannot reach the gateway's health port: %s", output)
 		output, err = KubectlExec("pod/outsider", "sh", ns, "nc", "-w", "3", gatewayIP, fmt.Sprint(resources.EgressAPIPort))
 		Expect(err).To(HaveOccurred(), "the egress API answered a pod outside the tunnel: %s", output)
-		// busybox nc prints nothing on a refused connection and exits 1; a missing binary or exec failure would not exit 1.
-		Expect(output).To(ContainSubstring("exit code 1"))
+		// busybox nc prints nothing on a refused connection and exits 1; an exec failure or a missing binary exits 126 or 127.
+		Expect(output).To(MatchRegexp(`exit code 1$`))
 
 		By("4: an attached client without the cycle label is refused a cycle")
 		applyClient("plain", nil, "sleep infinity")
@@ -141,6 +146,8 @@ var _ = Describe("egress API", func() {
 		Eventually(func(g Gomega) {
 			// The gateway must hold Ready=True through the cycle, so this is a hard failure rather than a retry.
 			Expect(wireguard(g, readyPath)).To(Equal("True"), "the gateway left Ready during the cycle")
+			// Attach egress to every poll so a leak while gluetun is stopped would reach eth0; the answer is irrelevant.
+			_, _ = KubectlExec("deploy/plain", "app", ns, "wget", "-q", "-T", "2", "-O-", fmt.Sprintf("http://%s:%d/", exitAddress, exitHTTPPort))
 			g.Expect(wireguard(g, "{.status.egress.lastCycle.reason}")).To(Or(Equal("IPUnchanged"), Equal("EmptyIP")))
 		}, 4*time.Minute, 5*time.Second).Should(Succeed())
 		expectNoLeak(Default, ns)
@@ -156,11 +163,14 @@ var _ = Describe("egress API", func() {
 		}, 4*time.Minute, 5*time.Second).Should(Succeed())
 		finishedAt := wireguard(Default, "{.status.egress.lastCycle.finishedAt}")
 		Expect(finishedAt).NotTo(Equal(before), "the annotation's cycle did not replace the previous one")
-		// Once the cooldown has passed a handled annotation must not start a second cycle.
-		time.Sleep(resources.CycleCooldown)
+		// A handled annotation must not start a second cycle. The cooldown ends by finishedAt+CycleCooldown, the agent
+		// then needs a pass and the operator a poll to show one, so watch until a re-trigger would have landed.
+		finished, err := time.Parse(time.RFC3339, finishedAt)
+		Expect(err).NotTo(HaveOccurred(), "parse finishedAt %q", finishedAt)
+		window := time.Until(finished.Add(resources.CycleCooldown + resources.EgressPollInterval + 30*time.Second))
 		Consistently(func(g Gomega) {
 			g.Expect(wireguard(g, "{.status.egress.lastCycle.finishedAt}")).To(Equal(finishedAt))
-		}, 20*time.Second, 5*time.Second).Should(Succeed())
+		}, max(window, 20*time.Second), 5*time.Second).Should(Succeed())
 
 		By("7: the exit node reaches the holder's listener through gluetun's forwarded port, over TCP and UDP")
 		gluetunTunnelIP := strings.TrimSuffix(gluetunTunnelAddress, "/32")
@@ -188,17 +198,25 @@ var _ = Describe("egress API", func() {
 		// The agent reads the new holder from the state Secret the kubelet syncs into its pod, which can take a minute or two.
 		Eventually(func(g Gomega) {
 			nat := vpnAgent(g, "iptables-save", "-t", "nat")
-			g.Expect(nat).NotTo(ContainSubstring("--to-destination "+holderAddress), "the old holder's DNAT rule is still installed")
+			g.Expect(nat).NotTo(ContainSubstring("--to-destination "+holderAddress+":"), "the old holder's DNAT rule is still installed")
 			g.Expect(nat).To(ContainSubstring(fmt.Sprintf("--to-destination %s:%d", secondAddress, egressForwardedPort)))
 		}, 3*time.Minute, Interval).Should(Succeed())
 
 		By("9: a filter flush in the agent is repaired, with the new holder's ACCEPT rules back")
 		vpnAgent(Default, "iptables", "-F")
 		Eventually(func(g Gomega) {
+			// Each jump is the first rule of its built-in chain.
 			for _, c := range []struct{ builtin, chain string }{
 				{"FORWARD", resources.ChainForward}, {"INPUT", resources.ChainInput}, {"OUTPUT", resources.ChainOutput},
 			} {
-				vpnAgent(g, "iptables", "-C", c.builtin, "-j", c.chain)
+				var first string
+				for line := range strings.SplitSeq(vpnAgent(g, "iptables", "-S", c.builtin), "\n") {
+					if strings.HasPrefix(line, "-A ") {
+						first = line
+						break
+					}
+				}
+				g.Expect(first).To(Equal(fmt.Sprintf("-A %s -j %s", c.builtin, c.chain)))
 			}
 			rules := vpnAgent(g, "iptables", "-S", resources.ChainForward)
 			for _, proto := range []string{"tcp", "udp"} {

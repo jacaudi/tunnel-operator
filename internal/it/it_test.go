@@ -385,13 +385,18 @@ var _ = Describe("wireguard controller", func() {
 		}
 		WaitForWireguardToBeReady("vpn", TestNamespace, GatewayTimeout)
 		appFetchesExit(GatewayTimeout)
-		// The flush and -X above deleted the agent's INPUT and OUTPUT chains and their jumps; the re-assert loop
-		// puts them back. This gateway has no forwarded-port holder, so only these two chains are checked here.
+		// The flush and -X above deleted the agent's three filter chains and their jumps; the re-assert loop puts
+		// them back. This gateway has no forwarded-port holder, so FORWARD holds no rules to check: the jumps and
+		// the INPUT rule that admits the egress API are what is checked here.
 		Eventually(func(g Gomega) {
-			for _, c := range []struct{ builtin, chain string }{{"INPUT", resources.ChainInput}, {"OUTPUT", resources.ChainOutput}} {
+			for _, c := range []struct{ builtin, chain string }{
+				{"FORWARD", resources.ChainForward}, {"INPUT", resources.ChainInput}, {"OUTPUT", resources.ChainOutput},
+			} {
 				vpnAgent(g, "iptables", "-S", c.chain)
 				vpnAgent(g, "iptables", "-C", c.builtin, "-j", c.chain)
 			}
+			g.Expect(vpnAgent(g, "iptables", "-S", resources.ChainInput)).To(
+				MatchRegexp(fmt.Sprintf(`(?m)^-A %s .*--dport %d -j ACCEPT$`, resources.ChainInput, resources.EgressAPIPort)))
 		}, 15*time.Second, Interval).Should(Succeed())
 
 		By("scenario (d): the gateway pod is replaced")
