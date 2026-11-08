@@ -5,7 +5,11 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/netip"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/jacaudi/tunnel-operator/api/v1alpha1"
@@ -14,7 +18,9 @@ import (
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -263,4 +269,203 @@ var _ = Describe("egress permissions from verified pod labels", func() {
 		Eventually(func() string { return egressOf(gw)().Egress.CycleRequestedAt }, egressTimeout, egressInterval).
 			Should(Equal("request-2"))
 	})
+
+	// The operator polls the agent of a Ready server and writes what it reports into status. Nothing watches
+	// Pods, so a spec that adds the gateway's pod or changes what the fake reader says nudges the Wireguard.
+	Context("status polled from the agent", func() {
+		const (
+			apiURL = "http://10.8.0.1:8081"
+			podIP  = "192.0.2.11"
+		)
+		finished := time.Date(2026, time.November, 8, 12, 0, 0, 0, time.UTC)
+		cycle := func(reason string, at time.Time) *v1alpha1.CycleResult {
+			return &v1alpha1.CycleResult{Reason: reason, OldExitIP: "203.0.113.8", NewExitIP: "203.0.113.9", Trigger: "api:10.8.0.2", FinishedAt: metav1.NewTime(at)}
+		}
+
+		AfterEach(func() { egressReader.forget(podIP) })
+
+		// readyGatewayPod creates the pod the gateway's Deployment would run, which envtest has no
+		// controller to do, and marks it Ready with podIP as the kubelet would.
+		readyGatewayPod := func(gw types.NamespacedName) {
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: gw.Namespace, Name: gw.Name + "-dep"}, dep)).Should(Succeed())
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: gw.Name + "-pod", Namespace: gw.Namespace, Labels: dep.Spec.Selector.MatchLabels},
+				Spec:       corev1.PodSpec{ServiceAccountName: "default", Containers: []corev1.Container{{Name: "app", Image: "busybox"}}},
+			}
+			Expect(k8sClient.Create(ctx, pod)).Should(Succeed())
+			created = append(created, pod)
+			pod.Status = corev1.PodStatus{
+				Phase:      corev1.PodRunning,
+				PodIP:      podIP,
+				PodIPs:     []corev1.PodIP{{IP: podIP}},
+				Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+			}
+			Expect(k8sClient.Status().Update(ctx, pod)).Should(Succeed())
+		}
+
+		statusOf := func(gw types.NamespacedName) func() v1alpha1.WireguardStatus {
+			return func() v1alpha1.WireguardStatus {
+				live := &v1alpha1.Wireguard{}
+				_ = k8sClient.Get(ctx, gw, live)
+				return live.Status
+			}
+		}
+
+		// egressDiff is "" once status.egress is semantically what want says, else both as JSON.
+		egressDiff := func(gw types.NamespacedName, want *v1alpha1.EgressStatus) func() string {
+			return func() string {
+				got := statusOf(gw)().Egress
+				if equality.Semantic.DeepEqual(got, want) {
+					return ""
+				}
+				g, _ := json.Marshal(got)
+				w, _ := json.Marshal(want)
+				return "got " + string(g) + ", want " + string(w)
+			}
+		}
+
+		cycled := func(gw types.NamespacedName) func() string {
+			return func() string {
+				if c := meta.FindStatusCondition(statusOf(gw)().Conditions, "Cycled"); c != nil {
+					return string(c.Status) + "/" + c.Reason
+				}
+				return ""
+			}
+		}
+
+		// polled waits until the reconciler has asked the fake reader again after before, which a nudge
+		// causes, so a spec that then asserts nothing changed has seen a poll happen.
+		polled := func(before int) {
+			Eventually(func() int { return egressReader.callsTo(podIP) }, egressTimeout, egressInterval).Should(BeNumerically(">", before))
+		}
+
+		// settled brings a gateway to a Ready server whose pod reports rep, and returns the status.egress
+		// that results.
+		settled := func(name string, rep EgressReport) (types.NamespacedName, *v1alpha1.EgressStatus) {
+			gw := gateway(name)
+			egressReader.set(podIP, rep, nil)
+			readyGatewayPod(gw)
+			nudge(gw, "settle")
+			Eventually(func() bool { return statusOf(gw)().Egress != nil }, egressTimeout, egressInterval).Should(BeTrue())
+			return gw, statusOf(gw)().Egress
+		}
+
+		wantEgress := &v1alpha1.EgressStatus{ExitIP: "203.0.113.9", ForwardedPort: 51413, LastHandledAnnotation: "req-1", LastCycle: cycle("Succeeded", finished)}
+		wantReport := EgressReport{ExitIP: "203.0.113.9", ForwardedPort: 51413, LastHandledAnnotation: "req-1", LastCycle: cycle("Succeeded", finished)}
+
+		It("status.egress and egressAPI appear from the reader", func() {
+			gw := gateway("poll-appear")
+			Expect(statusOf(gw)().EgressAPI).Should(Equal(apiURL), "the Ready write carries the API URL")
+			Expect(statusOf(gw)().Egress).Should(BeNil(), "no pod has reported yet")
+			Expect(cycled(gw)()).Should(BeEmpty(), "the Cycled condition is absent until there is a cycle")
+
+			egressReader.set(podIP, wantReport, nil)
+			readyGatewayPod(gw)
+			nudge(gw, "1")
+
+			Eventually(egressDiff(gw, wantEgress), egressTimeout, egressInterval).Should(BeEmpty())
+			Expect(statusOf(gw)().EgressAPI).Should(Equal(apiURL))
+			Expect(statusOf(gw)().Status).Should(Equal(v1alpha1.Ready))
+		})
+
+		It("status.egress content is stable across nudges", func() {
+			gw, want := settled("poll-stable", wantReport)
+			before := egressReader.callsTo(podIP)
+
+			for i := 1; i <= 3; i++ {
+				nudge(gw, strconv.Itoa(i))
+			}
+
+			polled(before)
+			Consistently(egressDiff(gw, want), "3s", egressInterval).Should(BeEmpty())
+		})
+
+		It("a reader error keeps the last status.egress", func() {
+			gw, want := settled("poll-error", wantReport)
+			before := egressReader.callsTo(podIP)
+
+			egressReader.set(podIP, EgressReport{}, errors.New("agent unreachable"))
+			nudge(gw, "error")
+
+			polled(before)
+			Consistently(egressDiff(gw, want), "3s", egressInterval).Should(BeEmpty())
+			Expect(statusOf(gw)().Status).Should(Equal(v1alpha1.Ready))
+		})
+
+		It("a LastCycle whose FinishedAt has nanoseconds is stored with second precision", func() {
+			gw, _ := settled("poll-nanos", EgressReport{ExitIP: "203.0.113.9", LastCycle: cycle("Succeeded", finished.Add(500*time.Millisecond))})
+
+			got := statusOf(gw)().Egress.LastCycle.FinishedAt
+			Expect(got.Time.Nanosecond()).Should(BeZero())
+			Expect(got.Time.UTC()).Should(Equal(finished))
+		})
+
+		It("a LastCycle without FinishedAt never reaches the apiserver", func() {
+			gw, got := settled("poll-nofinish", EgressReport{ExitIP: "203.0.113.9", LastCycle: &v1alpha1.CycleResult{Reason: "Succeeded", Trigger: "api:10.8.0.2"}})
+
+			Expect(got.ExitIP).Should(Equal("203.0.113.9"), "the rest of the report is still written")
+			Expect(got.LastCycle).Should(BeNil())
+			Expect(statusOf(gw)().Status).Should(Equal(v1alpha1.Ready))
+		})
+
+		It("Cycled is True after a Succeeded report and False after IPUnchanged", func() {
+			gw, _ := settled("poll-cycled", wantReport)
+			Eventually(cycled(gw), egressTimeout, egressInterval).Should(Equal("True/Succeeded"))
+
+			egressReader.set(podIP, EgressReport{ExitIP: "203.0.113.9", LastCycle: cycle("IPUnchanged", finished.Add(time.Minute))}, nil)
+			nudge(gw, "again")
+
+			Eventually(cycled(gw), egressTimeout, egressInterval).Should(Equal("False/IPUnchanged"))
+		})
+	})
 })
+
+// fakeEgressReader is the EgressReader the envtest reconciler is wired with. A spec sets what each pod IP
+// reports; an IP nothing was set for fails, as an unreachable agent does.
+type fakeEgressReader struct {
+	mu      sync.Mutex
+	results map[string]fakeEgressResult
+	calls   map[string]int
+}
+
+type fakeEgressResult struct {
+	report EgressReport
+	err    error
+}
+
+func newFakeEgressReader() *fakeEgressReader {
+	return &fakeEgressReader{results: map[string]fakeEgressResult{}, calls: map[string]int{}}
+}
+
+func (f *fakeEgressReader) Read(_ context.Context, podIP string) (EgressReport, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls[podIP]++
+	res, ok := f.results[podIP]
+	if !ok {
+		return EgressReport{}, fmt.Errorf("no result set for pod IP %s", podIP)
+	}
+	if res.err != nil {
+		return EgressReport{}, res.err
+	}
+	return res.report, nil
+}
+
+func (f *fakeEgressReader) set(podIP string, report EgressReport, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.results[podIP] = fakeEgressResult{report, err}
+}
+
+func (f *fakeEgressReader) forget(podIP string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.results, podIP)
+}
+
+func (f *fakeEgressReader) callsTo(podIP string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls[podIP]
+}

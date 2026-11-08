@@ -128,12 +128,7 @@ func (r *WireguardReconciler) desiredEgress(ctx context.Context, wg *v1alpha1.Wi
 // removes it from a peer reasons does not name, which has stopped being eligible. A peer that already
 // carries the condition is not written; a skipped write is the peer's retry, as in syncPeerIdentity.
 func (r *WireguardReconciler) syncPortForwarding(ctx context.Context, peers []v1alpha1.WireguardPeer, reasons map[string]string) error {
-	var holder string
-	for peer, reason := range reasons {
-		if reason == ReasonHeld {
-			holder = peer
-		}
-	}
+	holder := heldPeer(reasons)
 	for i := range peers {
 		peer := &peers[i]
 		reason, eligible := reasons[client.ObjectKeyFromObject(peer).String()]

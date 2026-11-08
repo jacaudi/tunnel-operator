@@ -25,6 +25,7 @@ import (
 
 	vpnv1alpha1 "github.com/jacaudi/tunnel-operator/api/v1alpha1"
 	controllers "github.com/jacaudi/tunnel-operator/internal/controller"
+	"github.com/jacaudi/tunnel-operator/internal/resources"
 	v1 "k8s.io/api/core/v1"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -125,6 +126,7 @@ func main() {
 		AgentImage:           wgImage,
 		AgentImagePullPolicy: v1.PullPolicy(agentImagePullPolicy),
 		APIReader:            mgr.GetAPIReader(),
+		EgressReader:         controllers.HTTPEgressReader{Timeout: resources.EgressPollTimeout},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Wireguard")
 		os.Exit(1)

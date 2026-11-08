@@ -51,6 +51,8 @@ const (
 	ConditionReady       = "Ready"
 	ConditionProgressing = "Progressing"
 	ConditionDegraded    = "Degraded"
+	// ConditionCycled mirrors status.egress.lastCycle: True when the last VPN cycle Succeeded, False with its reason otherwise.
+	ConditionCycled = "Cycled"
 )
 
 // WireguardReconciler reconciles a Wireguard object
@@ -63,6 +65,9 @@ type WireguardReconciler struct {
 	// APIReader reads straight from the apiserver. It serves the reads the manager's filtered Pod cache
 	// cannot: the cache holds only pods labelled for injection, so the gateway pods are invisible to Client.
 	APIReader client.Reader
+
+	// EgressReader polls a Ready server's agent for status.egress; nil skips the poll.
+	EgressReader EgressReader
 
 	// Resource builders
 	secretBuilder     *resources.SecretBuilder
@@ -99,7 +104,10 @@ type serverIdentity struct {
 // rendered: cond.ObservedGeneration is wg's generation, never that of the copy re-read here for a
 // fresh resourceVersion, so a spec patch that lands mid-reconcile cannot be reported as observed.
 // A non-nil identity sets status.endpoint and status.publicKey in the same write; nil leaves them.
-func (r *WireguardReconciler) updateStatus(ctx context.Context, wg *v1alpha1.Wireguard, cond metav1.Condition, identity *serverIdentity) error {
+// A non-nil egress sets status.egressAPI, status.egress and the Cycled condition in that write too (see
+// applyEgress); nil leaves them. The write is unconditional: an update identical to the stored object is a
+// no-op on the apiserver, so stability comes from deterministic values, not from skipping the call.
+func (r *WireguardReconciler) updateStatus(ctx context.Context, wg *v1alpha1.Wireguard, cond metav1.Condition, identity *serverIdentity, egress *egressUpdate) error {
 	latest := &v1alpha1.Wireguard{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(wg), latest); err != nil {
 		if errors.IsNotFound(err) {
@@ -146,6 +154,9 @@ func (r *WireguardReconciler) updateStatus(ctx context.Context, wg *v1alpha1.Wir
 	if identity != nil {
 		latest.Status.Endpoint = identity.Endpoint
 		latest.Status.PublicKey = identity.PublicKey
+	}
+	if egress != nil {
+		applyEgress(&latest.Status, wg.Generation, egress)
 	}
 
 	if err := r.Status().Update(ctx, latest); err != nil {
@@ -493,7 +504,7 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	log.Info("processing " + wireguard.Name)
 
 	if wireguard.Status.Status == "" {
-		err = r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionProgressing, Status: metav1.ConditionTrue, Reason: "FetchingStatus", Message: "Fetching Wireguard status"}, nil)
+		err = r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionProgressing, Status: metav1.ConditionTrue, Reason: "FetchingStatus", Message: "Fetching Wireguard status"}, nil, nil)
 
 		if err != nil {
 			return ctrl.Result{}, err
@@ -507,7 +518,7 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if reason, msg, err := r.specProblem(ctx, wireguard); err != nil {
 		return ctrl.Result{}, err
 	} else if reason != "" {
-		return ctrl.Result{RequeueAfter: time.Minute}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionDegraded, Status: metav1.ConditionTrue, Reason: reason, Message: msg}, nil)
+		return ctrl.Result{RequeueAfter: time.Minute}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionDegraded, Status: metav1.ConditionTrue, Reason: reason, Message: msg}, nil, nil)
 	}
 
 	// service
@@ -522,7 +533,7 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return r.failDegraded(ctx, wireguard, err, "ServiceApplyFailed", "Failed to apply service")
 	}
 	if err := clusterIPOutside(desiredSvc.Name, desiredSvc.Spec.ClusterIP, wireguard.Spec.LocalCIDRs); err != nil {
-		return ctrl.Result{RequeueAfter: time.Minute}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionDegraded, Status: metav1.ConditionTrue, Reason: ReasonClusterIPOutsideLocalCIDRs, Message: err.Error()}, nil)
+		return ctrl.Result{RequeueAfter: time.Minute}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionDegraded, Status: metav1.ConditionTrue, Reason: ReasonClusterIPOutsideLocalCIDRs, Message: err.Error()}, nil, nil)
 	}
 
 	// peers
@@ -681,12 +692,23 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// desiredDep holds the apiserver's response to the apply, so it carries the Deployment's current
-	// status. No requeue: Owns(&appsv1.Deployment{}) re-enqueues on every Deployment status change.
+	// status. No requeue while it is not ready: Owns(&appsv1.Deployment{}) re-enqueues on every Deployment
+	// status change.
 	if msg := rolloutProblem(desiredDep); msg != "" {
-		return ctrl.Result{}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionReady, Status: metav1.ConditionFalse, Reason: ReasonDeploymentNotReady, Message: msg}, identity)
+		return ctrl.Result{}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionReady, Status: metav1.ConditionFalse, Reason: ReasonDeploymentNotReady, Message: msg}, identity, nil)
 	}
 
-	return ctrl.Result{}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionReady, Status: metav1.ConditionTrue, Reason: "Active", Message: "VPN is active!"}, identity)
+	// A Ready server is polled for its egress status, which nothing else triggers, so it is requeued; the poll
+	// and the status it rides in are one write.
+	egressAPI, err := egressAPIURL(wireguard)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: resources.EgressPollInterval}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionReady, Status: metav1.ConditionTrue, Reason: "Active", Message: "VPN is active!"}, identity, &egressUpdate{
+		EgressAPI:         egressAPI,
+		ForwardedPortPeer: heldPeer(portReasons),
+		Report:            r.pollEgress(ctx, desiredDep),
+	})
 }
 
 // SetupWithManager sets up the controller with the Manager.
