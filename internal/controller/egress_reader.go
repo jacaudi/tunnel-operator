@@ -39,7 +39,8 @@ type EgressReport struct {
 }
 
 // egressHTTP polls the agents: it follows no redirect, so a 302 is a non-200, and uses no proxy from the
-// environment. Keep-alives are off because each pod is read once per requeue.
+// environment. Keep-alives are off because a zero http.Transport never reaps idle connections
+// (IdleConnTimeout is 0), so connections pooled to pod IPs that no longer exist would accumulate.
 var egressHTTP = &http.Client{
 	Transport:     &http.Transport{DisableKeepAlives: true},
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },

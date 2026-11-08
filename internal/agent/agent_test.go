@@ -173,6 +173,7 @@ func TestStateEgressRoundTrip(t *testing.T) {
 	want := Egress{
 		CycleAllowed:          []string{"10.8.0.2", "10.8.0.3"},
 		ForwardedPortPeer:     "10.8.0.2",
+		ForwardedPortPeerName: "media/holder",
 		StaticPort:            51413,
 		CycleRequestedAt:      "2026-11-08T10:00:00Z",
 		LastHandledAnnotation: "2026-11-07T10:00:00Z",

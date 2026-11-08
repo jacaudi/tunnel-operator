@@ -91,7 +91,7 @@ func cycledCondition(cycle v1alpha1.CycleResult, generation int64) metav1.Condit
 		Message:            "The last VPN cycle ended with a reason the operator does not recognise",
 		ObservedGeneration: generation,
 	}
-	if slices.Contains(cycleReasons, cycle.Reason) {
+	if slices.Contains(egress.CycleReasons, cycle.Reason) {
 		cond.Reason = cycle.Reason
 		cond.Message = "The last VPN cycle ended " + cycle.Reason
 	}
@@ -100,6 +100,3 @@ func cycledCondition(cycle v1alpha1.CycleResult, generation int64) metav1.Condit
 	}
 	return cond
 }
-
-// cycleReasons are the reasons a cycle ends with, which the agent defines.
-var cycleReasons = []string{egress.ReasonSucceeded, egress.ReasonIPUnchanged, egress.ReasonEmptyIP, egress.ReasonTimeout, egress.ReasonGluetunError}

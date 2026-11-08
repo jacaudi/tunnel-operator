@@ -1,13 +1,24 @@
 package controllers
 
 import (
+	"context"
 	"testing"
+	"time"
 
+	"github.com/jacaudi/tunnel-operator/api/v1alpha1"
+	"github.com/jacaudi/tunnel-operator/internal/ipam"
+	"github.com/jacaudi/tunnel-operator/internal/resources"
+
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 // A reconcile reads the Secret from the informer cache, which can lag a write the previous reconcile
@@ -64,5 +75,51 @@ func TestReplaceSecretConflictsOnAStaleRead(t *testing.T) {
 				t.Errorf("stored %s = %q, want %q", keyName, got, tt.wantKey)
 			}
 		})
+	}
+}
+
+// The Secret is read from the informer cache, which can still say NotFound after another reconcile
+// created it. The create then fails AlreadyExists, which is the same stale read as a Conflict: the next
+// reconcile sees the Secret, so it is a quiet requeue and not an error with its backoff.
+func TestReconcileRequeuesWhenTheSecretAlreadyExists(t *testing.T) {
+	s := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{v1alpha1.AddToScheme, corev1.AddToScheme, appsv1.AddToScheme} {
+		if err := add(s); err != nil {
+			t.Fatalf("add to the scheme: %v", err)
+		}
+	}
+	wg := &v1alpha1.Wireguard{
+		ObjectMeta: metav1.ObjectMeta{Name: "vpn", Namespace: "default"},
+		Spec:       v1alpha1.WireguardSpec{LocalCIDRs: []string{"10.96.0.0/12"}},
+		Status:     v1alpha1.WireguardStatus{Status: v1alpha1.Pending},
+	}
+	// The fake assigns no ClusterIP, and the reconcile stops at a Service outside localCIDRs.
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "vpn-svc", Namespace: "default"},
+		Spec:       corev1.ServiceSpec{ClusterIP: "10.96.0.10"},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(wg, svc).WithStatusSubresource(wg).
+		WithInterceptorFuncs(interceptor.Funcs{Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+			if _, ok := obj.(*corev1.Secret); ok {
+				return apierrors.NewAlreadyExists(corev1.Resource("secrets"), obj.GetName())
+			}
+			return cl.Create(ctx, obj, opts...)
+		}}).Build()
+	r := &WireguardReconciler{
+		Client:         c,
+		APIReader:      c,
+		Scheme:         s,
+		secretBuilder:  resources.NewSecretBuilder(s),
+		serviceBuilder: resources.NewServiceBuilder(s),
+		ipAllocator:    ipam.NewAllocator(),
+	}
+
+	got, err := r.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(wg)})
+
+	if err != nil {
+		t.Fatalf("Reconcile error = %v, want nil for a Secret that already exists", err)
+	}
+	if want := time.Second; got.RequeueAfter != want {
+		t.Errorf("RequeueAfter = %v, want %v", got.RequeueAfter, want)
 	}
 }

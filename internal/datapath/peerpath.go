@@ -7,6 +7,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/jacaudi/tunnel-operator/internal/ipam"
 	"github.com/jacaudi/tunnel-operator/internal/resources"
 )
 
@@ -27,13 +28,13 @@ func CheckPeerPath(peerCIDR string) error {
 }
 
 // peerProbeSource returns the second host of p, a peer address. It is never the first host: that is the
-// server's own wg0 address, and the kernel rejects a local source arriving on wg0.
+// server's own wg0 address (ipam.ServerAddress), and the kernel rejects a local source arriving on wg0.
 func peerProbeSource(p netip.Prefix) (netip.Addr, error) {
-	src := p.Masked().Addr().Next().Next()
-	if !p.Contains(src) {
-		return netip.Addr{}, fmt.Errorf("peerCIDR %s has no second host for the peer-path probe", p)
+	srv, err := ipam.ServerAddress(p)
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("peerCIDR %s has no second host for the peer-path probe: %w", p, err)
 	}
-	return src, nil
+	return srv.Next(), nil
 }
 
 // judgePeerPath turns the kernel's route lookup (the device it chose, or its error) into the readiness verdict.

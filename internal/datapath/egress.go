@@ -73,7 +73,8 @@ func (d *Datapath) ensureEgress(ctx context.Context, r EgressRules) error {
 }
 
 // egressRestoreInput returns the iptables-restore input that declares, flushes and refills the agent's
-// chains. It never declares or flushes a built-in chain: with --noflush they keep their rules.
+// chains. It never declares or flushes a built-in chain: with --noflush they keep their rules. The
+// tunnel address must be valid; ensureEgress refuses a rule set without one.
 func egressRestoreInput(r EgressRules) []byte {
 	nat := []string{"*nat", ":" + resources.ChainPrerouting + " - [0:0]", "-F " + resources.ChainPrerouting}
 	filter := []string{
@@ -93,13 +94,11 @@ func egressRestoreInput(r EgressRules) []byte {
 				resources.ChainForward, resources.EgressInterface, resources.WgInterface, r.Holder, proto, r.Port))
 		}
 	}
-	if r.TunnelAddr.IsValid() {
-		filter = append(filter,
-			fmt.Sprintf("-A %s -i %s -d %s -p tcp --dport %d -j ACCEPT",
-				resources.ChainInput, resources.WgInterface, r.TunnelAddr, resources.EgressAPIPort),
-			fmt.Sprintf("-A %s -o %s -s %s -p tcp --sport %d -m conntrack --ctstate ESTABLISHED -j ACCEPT",
-				resources.ChainOutput, resources.WgInterface, r.TunnelAddr, resources.EgressAPIPort))
-	}
+	filter = append(filter,
+		fmt.Sprintf("-A %s -i %s -d %s -p tcp --dport %d -j ACCEPT",
+			resources.ChainInput, resources.WgInterface, r.TunnelAddr, resources.EgressAPIPort),
+		fmt.Sprintf("-A %s -o %s -s %s -p tcp --sport %d -m conntrack --ctstate ESTABLISHED -j ACCEPT",
+			resources.ChainOutput, resources.WgInterface, r.TunnelAddr, resources.EgressAPIPort))
 	nat = append(nat, "COMMIT")
 	filter = append(filter, "COMMIT")
 	return []byte(strings.Join(slices.Concat(nat, filter), "\n") + "\n")

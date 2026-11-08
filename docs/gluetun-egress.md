@@ -335,12 +335,15 @@ spec:
 One pod at a time holds the port, and the agent sends TCP and UDP on it to that pod over the tunnel:
 
 - **The holder keeps the port** while it stays a candidate. Removing the label, deleting the pod or
-  detaching it releases the port.
-- **Otherwise the oldest candidate wins**: by the peer's `creationTimestamp`, then name, then namespace.
+  detaching it releases the port. The holder is a peer (`namespace/name`), not a tunnel address: a
+  restarted workload gets a new pod and so a new peer name, and competes as a new candidate even if
+  it is given the old address.
+- **Otherwise the oldest candidate wins**: by the peer's `creationTimestamp`, then name, then
+  namespace.
 - **Each candidate peer's `PortForwarding` condition says who won**: `True` with reason `Held` on
   the holder, and `False` with reason `HeldByAnotherPeer` on the others, naming the holder. See
-  [`WireguardPeer`](crd-wireguardpeer.md#portforwarding). `status.egress.forwardedPortPeer` names the
-  holder as `namespace/name`.
+  [`WireguardPeer`](crd-wireguardpeer.md#portforwarding).
+  `status.egress.forwardedPortPeer` names the holder as `namespace/name`.
 - **A handover is not instant.** The agent learns the new holder through the kubelet's Secret sync
   (see [How soon the agent acts](#cycling-the-vpn)), so the old DNAT can outlive the change by that
   lag.

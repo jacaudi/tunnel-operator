@@ -154,14 +154,22 @@ var _ = Describe("no update churn", func() {
 
 		// awaitQuiet returns once no reconcile is in flight: the Service is the first object a
 		// reconcile applies, so two seconds without a Service write means the cascade has finished.
+		// It waits for those two seconds to begin rather than asserting they begin now: a reconcile
+		// already queued when it is called is waited out, not reported. A reconciler that never stops
+		// writing still fails, at churnTimeout.
 		awaitQuiet := func() {
-			n := writeCounter.writesTo(churnNS, svcName)
-			Consistently(func() int { return writeCounter.writesTo(churnNS, svcName) },
-				"2s", churnInterval).Should(Equal(n), "a reconcile was still in flight")
+			last, since := -1, time.Now()
+			Eventually(func() bool {
+				if n := writeCounter.writesTo(churnNS, svcName); n != last {
+					last, since = n, time.Now()
+				}
+				return time.Since(since) >= 2*time.Second
+			}, churnTimeout, churnInterval).Should(BeTrue(), "the reconciler never went quiet")
 		}
 
 		// Let the create cascade finish. Ready=True is written only by a reconcile that applied all
-		// two objects, and the status write it causes triggers one more reconcile; wait that out
+		// two objects. The Ready=False write before it and the Ready=True write itself each trigger one
+		// more reconcile, and both can still be in flight when Ready=True is first seen; wait them out
 		// too, so reset() cannot land between a reconcile's Service apply and its Deployment apply.
 		Eventually(func() bool {
 			live := &v1alpha1.Wireguard{}

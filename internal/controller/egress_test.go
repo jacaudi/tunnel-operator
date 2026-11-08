@@ -26,68 +26,81 @@ import (
 func TestElectHolder(t *testing.T) {
 	t0 := metav1.NewTime(time.Date(2026, time.November, 8, 12, 0, 0, 0, time.UTC))
 	t1 := metav1.NewTime(t0.Add(time.Minute))
-	cand := func(addr string, created metav1.Time, ns, name string) candidate {
-		return candidate{address: addr, created: created, namespace: ns, name: name}
+	cand := func(created metav1.Time, ns, name string) *v1alpha1.WireguardPeer {
+		return &v1alpha1.WireguardPeer{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name, CreationTimestamp: created}}
 	}
 
 	tests := []struct {
 		name       string
-		current    string
-		candidates []candidate
-		want       string
+		current    string // namespace/name of the current holder
+		candidates []*v1alpha1.WireguardPeer
+		want       string // namespace/name of the winner, "" for none
 	}{
 		{
 			name:    "the current holder keeps the port while it is a candidate, though a peer is older",
-			current: "10.8.0.3",
-			candidates: []candidate{
-				cand("10.8.0.2", t0, "ns", "old"),
-				cand("10.8.0.3", t1, "ns", "young"),
+			current: "ns/young",
+			candidates: []*v1alpha1.WireguardPeer{
+				cand(t0, "ns", "old"),
+				cand(t1, "ns", "young"),
 			},
-			want: "10.8.0.3",
+			want: "ns/young",
 		},
 		{
 			name:    "the oldest peer wins when the current holder is gone",
-			current: "10.8.0.9",
-			candidates: []candidate{
-				cand("10.8.0.3", t1, "ns", "young"),
-				cand("10.8.0.2", t0, "ns", "old"),
+			current: "ns/gone",
+			candidates: []*v1alpha1.WireguardPeer{
+				cand(t1, "ns", "young"),
+				cand(t0, "ns", "old"),
 			},
-			want: "10.8.0.2",
+			want: "ns/old",
+		},
+		{
+			name:    "a holder of the same name in another namespace is not the current holder",
+			current: "other/young",
+			candidates: []*v1alpha1.WireguardPeer{
+				cand(t1, "ns", "young"),
+				cand(t0, "ns", "old"),
+			},
+			want: "ns/old",
 		},
 		{
 			name: "the oldest peer wins when there is no current holder",
-			candidates: []candidate{
-				cand("10.8.0.3", t1, "ns", "young"),
-				cand("10.8.0.2", t0, "ns", "old"),
+			candidates: []*v1alpha1.WireguardPeer{
+				cand(t1, "ns", "young"),
+				cand(t0, "ns", "old"),
 			},
-			want: "10.8.0.2",
+			want: "ns/old",
 		},
 		{
 			name: "a tie on age is broken by the lower name",
-			candidates: []candidate{
-				cand("10.8.0.2", t0, "ns", "b"),
-				cand("10.8.0.3", t0, "ns", "a"),
+			candidates: []*v1alpha1.WireguardPeer{
+				cand(t0, "ns", "b"),
+				cand(t0, "ns", "a"),
 			},
-			want: "10.8.0.3",
+			want: "ns/a",
 		},
 		{
 			name: "a tie on age and name is broken by the lower namespace",
-			candidates: []candidate{
-				cand("10.8.0.2", t0, "zeta", "app"),
-				cand("10.8.0.3", t0, "alpha", "app"),
+			candidates: []*v1alpha1.WireguardPeer{
+				cand(t0, "zeta", "app"),
+				cand(t0, "alpha", "app"),
 			},
-			want: "10.8.0.3",
+			want: "alpha/app",
 		},
 		{
 			name:    "no candidates leaves the port unheld, whoever held it",
-			current: "10.8.0.2",
+			current: "ns/old",
 			want:    "",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := electHolder(tt.current, tt.candidates); got != tt.want {
-				t.Errorf("electHolder(%q, %v) = %q, want %q", tt.current, tt.candidates, got, tt.want)
+			var got string
+			if h := electHolder(tt.current, tt.candidates); h != nil {
+				got = client.ObjectKeyFromObject(h).String()
+			}
+			if got != tt.want {
+				t.Errorf("electHolder(%q, ...) = %q, want %q", tt.current, got, tt.want)
 			}
 		})
 	}
@@ -121,6 +134,8 @@ func TestOwnerOf(t *testing.T) {
 	notAPod.OwnerReferences[0].Kind = "ReplicaSet"
 	notAController := podOwnedPeer("ns", "app", "app", "uid-1")
 	notAController.OwnerReferences[0].Controller = nil
+	otherAPIVersion := podOwnedPeer("ns", "app", "app", "uid-1")
+	otherAPIVersion.OwnerReferences[0].APIVersion = "example.com/v1"
 
 	tests := []struct {
 		name string
@@ -129,22 +144,22 @@ func TestOwnerOf(t *testing.T) {
 		want ownerInfo
 	}{
 		{
-			name: "name and UID match: verified, and both labels count",
+			name: "name and UID match: both labels count",
 			peer: podOwnedPeer("ns", "app", "app", "uid-1"),
 			pod:  egressPod("ns", "app", "uid-1", bothLabels),
-			want: ownerInfo{verified: true, cycle: true, forwardedPort: true},
+			want: ownerInfo{cycle: true, forwardedPort: true},
 		},
 		{
-			name: "verified with only the cycle label",
+			name: "only the cycle label counts",
 			peer: podOwnedPeer("ns", "app", "app", "uid-1"),
 			pod:  egressPod("ns", "app", "uid-1", map[string]string{resources.LabelCycle: resources.CycleAllowedValue}),
-			want: ownerInfo{verified: true, cycle: true},
+			want: ownerInfo{cycle: true},
 		},
 		{
-			name: "verified with only the forwarded-port label",
+			name: "only the forwarded-port label counts",
 			peer: podOwnedPeer("ns", "app", "app", "uid-1"),
 			pod:  egressPod("ns", "app", "uid-1", map[string]string{resources.LabelForwardedPort: resources.ForwardedPortValue}),
-			want: ownerInfo{verified: true, forwardedPort: true},
+			want: ownerInfo{forwardedPort: true},
 		},
 		{
 			name: "a label with any other value does not count",
@@ -152,7 +167,7 @@ func TestOwnerOf(t *testing.T) {
 			pod: egressPod("ns", "app", "uid-1", map[string]string{
 				resources.LabelCycle: "denied", resources.LabelForwardedPort: "false",
 			}),
-			want: ownerInfo{verified: true},
+			want: ownerInfo{},
 		},
 		{
 			name: "a UID mismatch is not verified and the labels do not count",
@@ -175,6 +190,12 @@ func TestOwnerOf(t *testing.T) {
 		{
 			name: "a controller that is not a Pod is not verified",
 			peer: notAPod,
+			pod:  egressPod("ns", "app", "uid-1", bothLabels),
+			want: ownerInfo{},
+		},
+		{
+			name: "a controller of kind Pod in another API group is not verified",
+			peer: otherAPIVersion,
 			pod:  egressPod("ns", "app", "uid-1", bothLabels),
 			want: ownerInfo{},
 		},
@@ -224,6 +245,7 @@ func TestDesiredStateCarriesEgress(t *testing.T) {
 	egress := agent.Egress{
 		CycleAllowed:          []string{"10.8.0.2"},
 		ForwardedPortPeer:     "10.8.0.3",
+		ForwardedPortPeerName: "media/holder",
 		StaticPort:            51413,
 		CycleRequestedAt:      "2026-11-08T12:00:00Z",
 		LastHandledAnnotation: "2026-11-07T12:00:00Z",
@@ -299,8 +321,8 @@ func TestDesiredEgress(t *testing.T) {
 		if err != nil {
 			t.Fatalf("desiredEgress() error = %v", err)
 		}
-		if got.ForwardedPortPeer != "10.8.0.2" {
-			t.Errorf("ForwardedPortPeer = %q, want 10.8.0.2", got.ForwardedPortPeer)
+		if got.ForwardedPortPeer != "10.8.0.2" || got.ForwardedPortPeerName != "media/old" {
+			t.Errorf("holder = %q (%q), want 10.8.0.2 (media/old)", got.ForwardedPortPeer, got.ForwardedPortPeerName)
 		}
 		want := map[string]string{"media/old": ReasonHeld, "media/young": ReasonHeldByAnotherPeer}
 		if !reflect.DeepEqual(conds, want) {
@@ -311,12 +333,28 @@ func TestDesiredEgress(t *testing.T) {
 	t.Run("the current holder keeps the port over an older claimant", func(t *testing.T) {
 		r := &WireguardReconciler{APIReader: fake.NewClientBuilder().WithObjects(pod("old", fwd), pod("young", fwd)).Build()}
 		peers := []v1alpha1.WireguardPeer{peer("young", "10.8.0.3", 5), peer("old", "10.8.0.2", 0)}
-		got, _, err := r.desiredEgress(t.Context(), &v1alpha1.Wireguard{}, peers, "10.8.0.3")
+		got, _, err := r.desiredEgress(t.Context(), &v1alpha1.Wireguard{}, peers, "media/young")
 		if err != nil {
 			t.Fatalf("desiredEgress() error = %v", err)
 		}
-		if got.ForwardedPortPeer != "10.8.0.3" {
-			t.Errorf("ForwardedPortPeer = %q, want the current holder 10.8.0.3", got.ForwardedPortPeer)
+		if got.ForwardedPortPeer != "10.8.0.3" || got.ForwardedPortPeerName != "media/young" {
+			t.Errorf("holder = %q (%q), want the current holder 10.8.0.3 (media/young)", got.ForwardedPortPeer, got.ForwardedPortPeerName)
+		}
+	})
+
+	t.Run("a departed holder's address reused by a newer peer does not keep the port from an older claimant", func(t *testing.T) {
+		r := &WireguardReconciler{APIReader: fake.NewClientBuilder().WithObjects(pod("old", fwd), pod("young", fwd)).Build()}
+		// The holder was at 10.8.0.3 and is gone; its replacement "young" was allocated that address.
+		peers := []v1alpha1.WireguardPeer{peer("young", "10.8.0.3", 5), peer("old", "10.8.0.2", 0)}
+		got, conds, err := r.desiredEgress(t.Context(), &v1alpha1.Wireguard{}, peers, "media/gone")
+		if err != nil {
+			t.Fatalf("desiredEgress() error = %v", err)
+		}
+		if got.ForwardedPortPeer != "10.8.0.2" || got.ForwardedPortPeerName != "media/old" {
+			t.Errorf("holder = %q (%q), want the older claimant 10.8.0.2 (media/old)", got.ForwardedPortPeer, got.ForwardedPortPeerName)
+		}
+		if want := map[string]string{"media/old": ReasonHeld, "media/young": ReasonHeldByAnotherPeer}; !reflect.DeepEqual(conds, want) {
+			t.Errorf("conditions = %v, want %v", conds, want)
 		}
 	})
 

@@ -3,12 +3,15 @@ package egress
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/jacaudi/tunnel-operator/api/v1alpha1"
 	"github.com/jacaudi/tunnel-operator/internal/agent"
@@ -366,5 +369,47 @@ func TestPeerListenerCloseRefusesAtOnce(t *testing.T) {
 			_ = conn.Close()
 			t.Fatalf("%s still accepts connections after Close", addr)
 		}
+	}
+}
+
+// logSink is a goroutine-safe io.Writer.
+type logSink struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (s *logSink) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *logSink) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
+}
+
+// A rebind or Close stops the server on purpose, so its serve goroutine must not report it.
+func TestPeerListenerRebindDoesNotWarn(t *testing.T) {
+	sink := &logSink{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(sink, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	l := &PeerListener{Handler: http.NotFoundHandler(), Port: 0}
+	t.Cleanup(func() { closeListener(t, l) })
+	// The IPv4 and IPv6 loopbacks are distinct addresses on every platform.
+	for i := range 100 {
+		addr := netip.MustParseAddr([]string{"127.0.0.1", "::1"}[i%2])
+		if err := l.Ensure(addr); err != nil {
+			t.Skipf("cannot bind %s here: %v", addr, err)
+		}
+	}
+	closeListener(t, l)
+	time.Sleep(100 * time.Millisecond) // let the last serve goroutine report, if it is going to
+
+	if got := sink.String(); strings.Contains(got, "the egress API server stopped") {
+		t.Errorf("a deliberate stop was logged as a failure:\n%s", got)
 	}
 }

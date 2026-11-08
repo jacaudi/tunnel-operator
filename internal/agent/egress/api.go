@@ -182,10 +182,12 @@ func (l *PeerListener) Ensure(addr netip.Addr) error {
 }
 
 // stopLocked closes the server and its listener and leaves the listener unbound. The listener is
-// closed directly because a server that has not reached Serve yet does not know it.
+// closed directly because a server that has not reached Serve yet does not know it. The server goes
+// first, so a serve goroutine that sees its listener close already knows the stop is deliberate and
+// returns http.ErrServerClosed.
 func (l *PeerListener) stopLocked() {
-	_ = l.ln.Close()
 	_ = l.srv.Close()
+	_ = l.ln.Close()
 	l.srv, l.ln, l.addr = nil, nil, netip.Addr{}
 }
 

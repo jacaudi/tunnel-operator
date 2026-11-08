@@ -1,6 +1,7 @@
 package egress
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -624,4 +625,41 @@ func TestCycleJSONKeys(t *testing.T) {
 	if got := string(b); got != want {
 		t.Errorf("JSON = %s, want %s", got, want)
 	}
+}
+
+// slowIP is a gluetunAPI whose PublicIP blocks until release is closed; the engine never calls
+// anything else of it in these tests.
+type slowIP struct {
+	gluetunAPI
+	release chan struct{}
+}
+
+func (s slowIP) PublicIP(ctx context.Context) (string, error) {
+	select {
+	case <-s.release:
+		return "1.1.1.1", nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+func TestRefreshStaticPortDoesNotWaitForGluetun(t *testing.T) {
+	g := slowIP{release: make(chan struct{})}
+	e := &Engine{G: g, StepTimeout: 5 * time.Second}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		e.Refresh(t.Context(), 60000)
+	}()
+	defer func() {
+		close(g.release)
+		<-done
+	}()
+
+	for end := time.Now().Add(2 * time.Second); time.Now().Before(end); time.Sleep(time.Millisecond) {
+		if e.Snapshot().ForwardedPort == 60000 {
+			return
+		}
+	}
+	t.Errorf("ForwardedPort = %d while gluetun's PublicIP hangs, want the static port 60000", e.Snapshot().ForwardedPort)
 }

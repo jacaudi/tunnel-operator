@@ -51,12 +51,9 @@ func (g *Gluetun) VPNStatus(ctx context.Context) (string, error) {
 
 // SetVPNStatus asks gluetun to move the VPN loop to status, "running" or "stopped".
 func (g *Gluetun) SetVPNStatus(ctx context.Context, status string) error {
-	body, err := json.Marshal(struct {
+	body, _ := json.Marshal(struct { // a one-string struct cannot fail to marshal
 		Status string `json:"status"`
 	}{status})
-	if err != nil {
-		return fmt.Errorf("gluetun PUT /v1/vpn/status: %w", err)
-	}
 	return g.do(ctx, http.MethodPut, "/v1/vpn/status", body, nil)
 }
 

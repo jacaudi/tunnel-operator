@@ -6,6 +6,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -129,6 +130,10 @@ func TestPublicIPEmptyIsEmptyString(t *testing.T) {
 // but the role does not name returns 401 from gluetun, and a route the role names but nothing calls
 // is access the agent does not need. The two must list the same method and path pairs.
 func TestGluetunClientCallsExactlyTheRoutesTheRoleGrants(t *testing.T) {
+	// gluetunCalls is kept by hand, so a client method added without a row would go uncompared.
+	if n := reflect.TypeFor[*Gluetun]().NumMethod(); n != len(gluetunCalls) {
+		t.Fatalf("*Gluetun has %d exported methods but gluetunCalls lists %d; add the new method to gluetunCalls", n, len(gluetunCalls))
+	}
 	called := map[string]bool{}
 	g := newGluetunClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called[r.Method+" "+r.URL.Path] = true

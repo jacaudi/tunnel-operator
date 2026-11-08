@@ -27,6 +27,7 @@ type State struct {
 type Egress struct {
 	CycleAllowed          []string // tunnel addresses of verified peers labelled cycle: allowed
 	ForwardedPortPeer     string   // the holder's tunnel address, or ""
+	ForwardedPortPeerName string   // the holder's namespace/name, or ""; the operator reads it back to keep the holder, the agent ignores it
 	StaticPort            int32    // spec.gluetun.portForwarding.staticPort, or 0
 	CycleRequestedAt      string   // the tunnel-operator.io/cycle-requested-at annotation value, or ""
 	LastHandledAnnotation string   // status.egress.lastHandledAnnotation, or ""

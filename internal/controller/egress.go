@@ -1,7 +1,6 @@
 package controllers
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -24,9 +23,9 @@ const (
 	ReasonHeldByAnotherPeer = "HeldByAnotherPeer"
 )
 
-// ownerInfo is what a peer's own pod grants it. cycle and forwardedPort are set only when verified.
+// ownerInfo is what a peer's own pod grants it. Both are false unless the peer is verified: controlled by
+// the live pod of its own name.
 type ownerInfo struct {
-	verified      bool // the peer is controlled by the live pod of its own name
 	cycle         bool // the pod is labelled resources.LabelCycle=resources.CycleAllowedValue
 	forwardedPort bool // the pod is labelled resources.LabelForwardedPort=resources.ForwardedPortValue
 }
@@ -52,39 +51,35 @@ func ownerOf(ctx context.Context, r client.Reader, peer v1alpha1.WireguardPeer) 
 		return ownerInfo{}, nil
 	}
 	return ownerInfo{
-		verified:      true,
 		cycle:         pod.Labels[resources.LabelCycle] == resources.CycleAllowedValue,
 		forwardedPort: pod.Labels[resources.LabelForwardedPort] == resources.ForwardedPortValue,
 	}, nil
 }
 
-// candidate is a peer eligible for the forwarded port: verified, labelled and admitted.
-type candidate struct {
-	address         string // the peer's status.address, as the agent matches it
-	created         metav1.Time
-	name, namespace string
-}
-
-// electHolder returns the address of the peer that holds the forwarded port. The current holder keeps it
-// while it is still a candidate; otherwise the oldest peer wins, then the lower name, then the lower
-// namespace (the order of older()). It returns "" when there is no candidate.
-func electHolder(current string, candidates []candidate) string {
-	if len(candidates) == 0 {
-		return ""
+// electHolder returns the candidate that holds the forwarded port, or nil when there is none. The peer
+// named current (a namespace/name) keeps it while it is still a candidate; otherwise the oldest peer
+// wins, then the lower name, then the lower namespace (the order of older()). The holder is identified
+// by name, never by tunnel address: a replacement peer can be allocated a departed holder's address.
+func electHolder(current string, candidates []*v1alpha1.WireguardPeer) *v1alpha1.WireguardPeer {
+	if i := slices.IndexFunc(candidates, func(p *v1alpha1.WireguardPeer) bool {
+		return client.ObjectKeyFromObject(p).String() == current
+	}); i >= 0 {
+		return candidates[i]
 	}
-	if slices.ContainsFunc(candidates, func(c candidate) bool { return c.address == current }) {
-		return current
+	var winner *v1alpha1.WireguardPeer
+	for _, c := range candidates {
+		if winner == nil || older(c, winner) {
+			winner = c
+		}
 	}
-	return slices.MinFunc(candidates, func(a, b candidate) int {
-		return cmp.Or(a.created.Compare(b.created.Time), cmp.Compare(a.name, b.name), cmp.Compare(a.namespace, b.namespace))
-	}).address
+	return winner
 }
 
 // desiredEgress renders the agent's Egress for wg from the admitted peers and the labels on their
-// verified pods, read through r.APIReader. currentHolder is the ForwardedPortPeer of the Secret's
-// current state.json. Its second result maps each candidate peer's namespace/name to its PortForwarding
-// reason, ReasonHeld or ReasonHeldByAnotherPeer. A failed pod read is an error: treating it as
-// unverified would drop a live permission or hand the port over.
+// verified pods, read through r.APIReader. currentHolder is the namespace/name in the Secret's current
+// state.json (Egress.ForwardedPortPeerName). Its second result maps each candidate peer's namespace/name
+// to its PortForwarding reason, ReasonHeld or ReasonHeldByAnotherPeer. A failed pod read is an error:
+// treating it as unverified would drop a live permission or hand the port over.
 func (r *WireguardReconciler) desiredEgress(ctx context.Context, wg *v1alpha1.Wireguard, admitted []v1alpha1.WireguardPeer, currentHolder string) (agent.Egress, map[string]string, error) {
 	egress := agent.Egress{CycleRequestedAt: wg.Annotations[resources.AnnotationCycleRequestedAt]}
 	if pf := wg.Spec.Gluetun.PortForwarding; pf != nil {
@@ -94,9 +89,10 @@ func (r *WireguardReconciler) desiredEgress(ctx context.Context, wg *v1alpha1.Wi
 		egress.LastHandledAnnotation = st.LastHandledAnnotation
 	}
 
-	var candidates []candidate
-	for _, peer := range admitted {
-		owner, err := ownerOf(ctx, r.APIReader, peer)
+	var candidates []*v1alpha1.WireguardPeer
+	for i := range admitted {
+		peer := &admitted[i]
+		owner, err := ownerOf(ctx, r.APIReader, *peer)
 		if err != nil {
 			return agent.Egress{}, nil, err
 		}
@@ -104,22 +100,28 @@ func (r *WireguardReconciler) desiredEgress(ctx context.Context, wg *v1alpha1.Wi
 			egress.CycleAllowed = append(egress.CycleAllowed, peer.Status.Address)
 		}
 		if owner.forwardedPort {
-			candidates = append(candidates, candidate{address: peer.Status.Address, created: peer.CreationTimestamp, name: peer.Name, namespace: peer.Namespace})
+			candidates = append(candidates, peer)
 		}
 	}
 	slices.Sort(egress.CycleAllowed)
-	egress.ForwardedPortPeer = electHolder(currentHolder, candidates)
+
+	var holderKey string
+	if holder := electHolder(currentHolder, candidates); holder != nil {
+		holderKey = client.ObjectKeyFromObject(holder).String()
+		egress.ForwardedPortPeer, egress.ForwardedPortPeerName = holder.Status.Address, holderKey
+	}
 
 	var reasons map[string]string
 	if len(candidates) > 0 {
 		reasons = make(map[string]string, len(candidates))
 	}
 	for _, c := range candidates {
+		key := client.ObjectKeyFromObject(c).String()
 		reason := ReasonHeldByAnotherPeer
-		if c.address == egress.ForwardedPortPeer {
+		if key == holderKey {
 			reason = ReasonHeld
 		}
-		reasons[c.namespace+"/"+c.name] = reason
+		reasons[key] = reason
 	}
 	return egress, reasons, nil
 }

@@ -20,6 +20,10 @@ const (
 	ReasonCooldownActive  = "CooldownActive"
 )
 
+// CycleReasons are the reasons a cycle can end with (Cycle.Reason); the other reasons refuse a cycle
+// before it starts.
+var CycleReasons = []string{ReasonSucceeded, ReasonIPUnchanged, ReasonEmptyIP, ReasonTimeout, ReasonGluetunError}
+
 const (
 	statusStopped = "stopped"
 	statusRunning = "running"
@@ -106,18 +110,27 @@ func (e *Engine) Snapshot() Snapshot {
 // Refresh reads the exit IP and forwarded port from gluetun into the cache. A positive staticPort
 // replaces gluetun's port. When gluetun errors the previous value is kept.
 func (e *Engine) Refresh(ctx context.Context, staticPort int32) {
+	// The static port needs no call to gluetun, so it is stored first: a hung gluetun must not
+	// delay it.
+	e.mu.Lock()
+	e.staticPort = staticPort
+	if staticPort > 0 {
+		e.port = staticPort
+	}
+	e.mu.Unlock()
+
 	ip, ipErr := bounded(ctx, e.stepTimeout(), e.G.PublicIP)
-	port, portErr := staticPort, error(nil)
+	var port int32
+	var portErr error
 	if staticPort <= 0 {
 		port, portErr = bounded(ctx, e.stepTimeout(), e.G.ForwardedPort)
 	}
 
 	e.mu.Lock()
-	e.staticPort = staticPort
 	if ipErr == nil {
 		e.exitIP = ip
 	}
-	if portErr == nil {
+	if staticPort <= 0 && portErr == nil {
 		e.port = port
 	}
 	e.mu.Unlock()
@@ -152,8 +165,9 @@ func (e *Engine) startLocked(trigger string) (bool, string, time.Duration) {
 	return true, "", 0
 }
 
-// run executes one cycle and records its outcome. It is the cycle goroutine's whole life and ends
-// at the latest when Deadline expires.
+// run executes one cycle and records its outcome. It is the cycle goroutine's whole life. The cycle
+// itself ends by Deadline; the deferred restart (up to restoreTimeout) and the final Refresh (up to
+// two StepTimeouts) then run on contexts that outlive it.
 func (e *Engine) run(trigger, oldIP string) {
 	ctx, cancel := context.WithTimeout(context.Background(), e.Deadline)
 	defer cancel()

@@ -556,7 +556,7 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// its peer is still eligible. No Secret, or an unreadable state, names no holder.
 	var stored agent.State
 	_ = json.Unmarshal(secret.Data["state.json"], &stored)
-	egress, portReasons, egressErr := r.desiredEgress(ctx, wireguard, admitted, stored.Egress.ForwardedPortPeer)
+	egress, portReasons, egressErr := r.desiredEgress(ctx, wireguard, admitted, stored.Egress.ForwardedPortPeerName)
 	if egressErr != nil {
 		return ctrl.Result{}, egressErr
 	}
@@ -655,7 +655,10 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		log.Info("Creating a new secret", "secret.Namespace", secret.Namespace, "secret.Name", secret.Name)
 
-		if err := r.Create(ctx, secret); err != nil {
+		if err := r.Create(ctx, secret); errors.IsAlreadyExists(err) {
+			// The NotFound above was a stale read; the next reconcile reads the Secret, as after a conflict.
+			return ctrl.Result{RequeueAfter: time.Second}, nil
+		} else if err != nil {
 			log.Error(err, "Failed to create new secret", "secret.Namespace", secret.Namespace, "secret.Name", secret.Name)
 			return ctrl.Result{}, err
 		}
