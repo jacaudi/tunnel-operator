@@ -15,7 +15,7 @@ New here? Start with the [Quick start in the root README](../README.md#quick-sta
 | [Architecture](architecture.md) | The two-resource model, the server pod, identity and addresses, injection, what is out of scope |
 | [`Wireguard` reference](crd-wireguard.md) | Server CRD: spec, status, conditions, owned objects, lifecycle |
 | [`WireguardPeer` reference](crd-wireguardpeer.md) | Peer CRD: spec, status, conditions, lifecycle |
-| [Gluetun egress](gluetun-egress.md) | Server egress through a gluetun container: configuration, `localCIDRs`, fail-closed routing, readiness |
+| [Gluetun egress](gluetun-egress.md) | Server egress through a gluetun container: configuration, `localCIDRs`, fail-closed routing, readiness, and the egress API (exit IP, forwarded port, VPN cycling) |
 | [Sidecar injection](injection.md) | Label a pod and the operator injects the sidecar: the default gateway, the admission policies, rejections, uninstall cleanup |
 | [Client sidecar](client-sidecar.md) | The in-pod WireGuard client: what it does, routing, the startup check, writing it into a pod spec yourself, troubleshooting |
 | [Upgrading from upstream](upgrading-from-upstream.md) | Migrating from jodevsa/wireguard-operator side by side: install this fork alongside it, then re-create objects under the new group |

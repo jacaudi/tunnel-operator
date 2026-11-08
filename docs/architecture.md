@@ -58,19 +58,24 @@ the pod and have the operator inject it; see [Sidecar injection](#sidecar-inject
 - **`agent`** (`NET_ADMIN`, read-only root filesystem) — creates `wg0` with the kernel module, or
   starts `wireguard-go` when the module is missing. It assigns the first host of `peerCIDR` to
   `wg0`, routes `peerCIDR` to it, and listens on UDP `51820`. It also asserts the fail-closed
-  routing and the forwarding rules, and re-asserts them every 10 seconds.
+  routing, the forwarding rules and its own `TUNNEL-OP-*` iptables chains, and re-asserts them every
+  10 seconds. It serves the [egress API](gluetun-egress.md#egress-api) to attached peers on the
+  server's tunnel address, port `8081`, and talks to gluetun's control server on loopback to read
+  the exit IP and forwarded port and to cycle the VPN, on a loop of its own.
 - **`gluetun`** (`NET_ADMIN`) — holds the tunnel to the VPN provider as `tun0`. It is configured
   by `spec.gluetun`, shares the agent's network namespace, and has no probes of its own: the agent
   polls its health server.
 - **Recreate, not rolling.** The Deployment's strategy is `Recreate`: one pod owns the key and the
   tunnel, so the old pod is gone before the new one starts.
-- **State, not commands.** The manager never talks to the agent. It writes the desired state — the
+- **State, not commands.** The manager sends the agent no commands; the one thing it does is read
+  the agent's `GET /egress` on port `8080` to fill `status.egress`. It writes the desired state — the
   server's private key, the server's name, namespace and spec (without `spec.gluetun`, so provider
   credentials never reach a second Secret), and, for each peer the server
   admits (a valid key and an address), the peer's name, namespace, `publicKey`, `wireguardRef` and
   `status.address`, sorted by name and then namespace — into the Secret's `state.json`, which
-  the pod mounts. A peer with no key, an invalid key, a key another peer holds, a namespace
-  the server does not allow, an address conflict or no free address is left out. Other peer
+  the pod mounts. It also carries an `Egress` block: the tunnel addresses of the peers whose pods may
+  cycle the VPN, the holder of the forwarded port, `staticPort` and the cycle annotation. A peer
+  with no key, an invalid key, a key another peer holds, a namespace the server does not allow, an address conflict or no free address is left out. Other peer
   metadata (labels, annotations, resourceVersion, managedFields) and the rest of the status never
   reach the file, so writing them does not rewrite the Secret. The agent watches the file and
   diffs it against the live device, adding, updating and removing peers by public key.
@@ -81,6 +86,7 @@ the pod and have the operator inject it; see [Sidecar injection](#sidecar-inject
   asserted, a peer's packet arriving on `wg0` would be forwarded into the tunnel and gluetun is
   healthy, and the `Wireguard` reports `Ready` only once that pod has rolled out. See
   [Readiness follows the tunnel](gluetun-egress.md#readiness-follows-the-tunnel).
+  While a VPN cycle runs, the gluetun and peer-path checks are skipped, so the pod stays ready.
 
 ## Identity and addresses
 
