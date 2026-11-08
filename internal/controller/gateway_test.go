@@ -169,6 +169,46 @@ func TestReservedInEnv(t *testing.T) {
 	}
 }
 
+// The four variables that lock gluetun's control server behind the agent's key. A user setting any of
+// them, inline or through envFrom, would open the server or move it out from under the agent.
+func TestIsReservedGluetunEnvCoversTheControlServer(t *testing.T) {
+	for _, name := range []string{
+		"HTTP_CONTROL_SERVER_ADDRESS",
+		"HTTP_CONTROL_SERVER_AUTH_CONFIG_FILEPATH",
+		"HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE",
+		"VPN_PORT_FORWARDING_LISTENING_PORT",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !isReservedGluetunEnv(name) {
+				t.Errorf("isReservedGluetunEnv(%q) = false, want true", name)
+			}
+		})
+	}
+}
+
+func TestSecretDiffers(t *testing.T) {
+	want := map[string][]byte{"state.json": []byte("s"), "gluetun-api-key": []byte("k"), "gluetun-auth.toml": []byte("t")}
+	tests := []struct {
+		name string
+		have map[string][]byte
+		want bool
+	}{
+		{name: "identical", have: map[string][]byte{"state.json": []byte("s"), "gluetun-api-key": []byte("k"), "gluetun-auth.toml": []byte("t")}, want: false},
+		{name: "a key the operator does not render is ignored", have: map[string][]byte{"state.json": []byte("s"), "gluetun-api-key": []byte("k"), "gluetun-auth.toml": []byte("t"), "extra": []byte("x")}, want: false},
+		{name: "state differs", have: map[string][]byte{"state.json": []byte("old"), "gluetun-api-key": []byte("k"), "gluetun-auth.toml": []byte("t")}, want: true},
+		{name: "the api key is missing", have: map[string][]byte{"state.json": []byte("s"), "gluetun-auth.toml": []byte("t")}, want: true},
+		{name: "only the auth file differs", have: map[string][]byte{"state.json": []byte("s"), "gluetun-api-key": []byte("k"), "gluetun-auth.toml": []byte("old")}, want: true},
+		{name: "no Secret data", have: nil, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := secretDiffers(tt.have, want); got != tt.want {
+				t.Errorf("secretDiffers(%q, %q) = %v, want %v", tt.have, want, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestReservedInKeys(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -106,9 +106,9 @@ func main() {
 	dp := datapath.New()
 
 	// An empty key is not fatal: the API still serves, and every cycle fails as GluetunError.
-	gluetunAPIKey := os.Getenv("GLUETUN_API_KEY")
+	gluetunAPIKey := os.Getenv(resources.EnvGluetunAPIKey)
 	if gluetunAPIKey == "" {
-		log.Info("GLUETUN_API_KEY is empty: every VPN cycle will fail as GluetunError")
+		log.Info(resources.EnvGluetunAPIKey + " is empty: every VPN cycle will fail as GluetunError")
 	}
 	engine := &egress.Engine{
 		// No client-wide timeout: every call carries its own context, bounded by the engine.

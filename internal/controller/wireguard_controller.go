@@ -439,6 +439,17 @@ func (r *WireguardReconciler) specProblem(ctx context.Context, wg *v1alpha1.Wire
 	return "", "", nil
 }
 
+// secretDiffers reports whether any key the operator renders into the server Secret differs from the
+// stored one. Keys the operator does not render are not compared.
+func secretDiffers(have, want map[string][]byte) bool {
+	for k, v := range want {
+		if !bytes.Equal(have[k], v) {
+			return true
+		}
+	}
+	return false
+}
+
 // +kubebuilder:rbac:groups=vpn.tunnel-operator.io,resources=wireguards,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=vpn.tunnel-operator.io,resources=wireguards/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=vpn.tunnel-operator.io,resources=wireguards/finalizers,verbs=update
@@ -541,15 +552,26 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, err
 		}
 
-		if !bytes.Equal(b, secret.Data["state.json"]) {
-			log.Info("Updating secret with new config")
-			publicKey := string(secret.Data["publicKey"])
-
-			updatedSecret, err := r.secretBuilder.ForWireguard(wireguard, b, privateKey, publicKey)
+		// The gluetun API key is generated once: a Secret that has one keeps it, so the agent's key and
+		// gluetun's roles file never fall out of step. The key is never logged.
+		gluetunAPIKey := string(secret.Data[resources.SecretKeyGluetunAPIKey])
+		if gluetunAPIKey == "" {
+			gluetunAPIKey, err = resources.NewGluetunAPIKey()
 			if err != nil {
-				log.Error(err, "Failed to build secret with new config")
+				log.Error(err, "Failed to generate gluetun API key")
 				return ctrl.Result{}, err
 			}
+		}
+
+		publicKey := string(secret.Data["publicKey"])
+		updatedSecret, err := r.secretBuilder.ForWireguard(wireguard, b, privateKey, publicKey, gluetunAPIKey)
+		if err != nil {
+			log.Error(err, "Failed to build secret with new config")
+			return ctrl.Result{}, err
+		}
+
+		if secretDiffers(secret.Data, updatedSecret.Data) {
+			log.Info("Updating secret with new config")
 			if err := r.Update(ctx, updatedSecret); err != nil {
 				log.Error(err, "Failed to update secret with new config")
 				return ctrl.Result{}, err
@@ -594,6 +616,12 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		privateKey := key.String()
 		publicKey := key.PublicKey().String()
 
+		gluetunAPIKey, err := resources.NewGluetunAPIKey()
+		if err != nil {
+			log.Error(err, "Failed to generate gluetun API key")
+			return ctrl.Result{}, err
+		}
+
 		state := desiredState(wireguard, privateKey, admitted)
 
 		b, err := json.Marshal(state)
@@ -602,7 +630,7 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, err
 		}
 
-		secret, err := r.secretBuilder.ForWireguard(wireguard, b, privateKey, publicKey)
+		secret, err := r.secretBuilder.ForWireguard(wireguard, b, privateKey, publicKey, gluetunAPIKey)
 		if err != nil {
 			log.Error(err, "Failed to build secret", "wireguard.Name", wireguard.Name)
 			return ctrl.Result{}, err

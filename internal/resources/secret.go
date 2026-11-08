@@ -33,8 +33,9 @@ func NewSecretBuilder(scheme *runtime.Scheme) *SecretBuilder {
 	return &SecretBuilder{scheme: scheme}
 }
 
-// ForWireguard creates a secret for a Wireguard server containing keys and state.
-func (b *SecretBuilder) ForWireguard(wg *v1alpha1.Wireguard, state []byte, privateKey, publicKey string) (*corev1.Secret, error) {
+// ForWireguard creates a secret for a Wireguard server containing keys, state, and the gluetun API
+// key with the roles file that grants it.
+func (b *SecretBuilder) ForWireguard(wg *v1alpha1.Wireguard, state []byte, privateKey, publicKey, gluetunAPIKey string) (*corev1.Secret, error) {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      wg.Name,
@@ -42,9 +43,11 @@ func (b *SecretBuilder) ForWireguard(wg *v1alpha1.Wireguard, state []byte, priva
 			Labels:    LabelsForWireguard(wg.Name),
 		},
 		Data: map[string][]byte{
-			"state.json": state,
-			"privateKey": []byte(privateKey),
-			"publicKey":  []byte(publicKey),
+			"state.json":           state,
+			"privateKey":           []byte(privateKey),
+			"publicKey":            []byte(publicKey),
+			SecretKeyGluetunAPIKey: []byte(gluetunAPIKey),
+			SecretKeyGluetunAuth:   GluetunAuthTOML(gluetunAPIKey),
 		},
 	}
 

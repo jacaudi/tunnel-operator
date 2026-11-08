@@ -1,6 +1,11 @@
 package resources
 
-import "time"
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"fmt"
+	"time"
+)
 
 const (
 	// EgressAPIPort is the port the agent serves the egress API on, bound only to the server tunnel
@@ -45,4 +50,28 @@ const (
 	SecretKeyGluetunAPIKey = "gluetun-api-key" //nolint:gosec // G101: a Secret key name, not a credential
 	// SecretKeyGluetunAuth is the server Secret key holding gluetun's auth config file.
 	SecretKeyGluetunAuth = "gluetun-auth.toml" //nolint:gosec // G101: a Secret key name, not a credential
+	// EnvGluetunAPIKey is the agent's environment variable carrying SecretKeyGluetunAPIKey.
+	EnvGluetunAPIKey = "GLUETUN_API_KEY" //nolint:gosec // G101: an environment variable name, not a credential
 )
+
+// NewGluetunAPIKey returns a fresh API key for gluetun's control server: 32 random bytes in unpadded
+// base64url, 43 characters.
+func NewGluetunAPIKey() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate gluetun API key: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// GluetunAuthTOML renders gluetun's roles file: one role, for the agent, limited to the routes the
+// agent calls. gluetun v3.41.3 decodes a role with DisallowUnknownFields, so name, routes, auth and
+// apikey are the only keys it may carry.
+func GluetunAuthTOML(apiKey string) []byte {
+	return fmt.Appendf(nil, `[[roles]]
+name = %q
+routes = ["GET /v1/publicip/ip", "GET /v1/portforward", "GET /v1/vpn/status", "PUT /v1/vpn/status"]
+auth = "apikey"
+apikey = %q
+`, GluetunAgentRole, apiKey)
+}
