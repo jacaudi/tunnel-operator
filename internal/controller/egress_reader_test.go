@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -247,4 +248,23 @@ func TestGatewayPod(t *testing.T) {
 			t.Error("gatewayPod() error = nil, want the list failure")
 		}
 	})
+}
+
+func TestHTTPEgressReaderDoesNotFollowRedirects(t *testing.T) {
+	var followed atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/egress", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/elsewhere", http.StatusFound) })
+	mux.HandleFunc("/elsewhere", func(w http.ResponseWriter, _ *http.Request) {
+		followed.Add(1)
+		_, _ = w.Write([]byte(`{"exitIP": "203.0.113.9"}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	if _, err := (HTTPEgressReader{Timeout: time.Second, baseURL: srv.URL}).Read(t.Context(), "192.0.2.1"); err == nil {
+		t.Error("Read() error = nil, want a 302 rejected as a non-200")
+	}
+	if n := followed.Load(); n != 0 {
+		t.Errorf("the redirect target was requested %d times, want 0", n)
+	}
 }

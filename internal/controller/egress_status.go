@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 	"strconv"
 	"time"
 
@@ -74,16 +75,31 @@ func applyEgress(st *v1alpha1.WireguardStatus, generation int64, u *egressUpdate
 		st.Egress = nil
 	}
 	if c := e.LastCycle; c != nil {
-		cond := metav1.Condition{
-			Type:               ConditionCycled,
-			Status:             metav1.ConditionFalse,
-			Reason:             c.Reason,
-			Message:            fmt.Sprintf("The last VPN cycle, triggered by %s, ended %s (exit IP %q -> %q)", c.Trigger, c.Reason, c.OldExitIP, c.NewExitIP),
-			ObservedGeneration: generation,
-		}
-		if c.Reason == egress.ReasonSucceeded {
-			cond.Status = metav1.ConditionTrue
-		}
-		meta.SetStatusCondition(&st.Conditions, cond)
+		meta.SetStatusCondition(&st.Conditions, cycledCondition(*c, generation))
 	}
 }
+
+// cycledCondition mirrors cycle: True when it Succeeded, False with its reason otherwise. The agent's data
+// must not reach the apiserver unchecked, which rejects a condition whose reason is not an identifier and
+// then fails every status write: the reason is kept only when it is one the agent defines, else Unknown, and
+// the message names no agent-supplied text (the trigger can be a 256 KiB annotation value).
+func cycledCondition(cycle v1alpha1.CycleResult, generation int64) metav1.Condition {
+	cond := metav1.Condition{
+		Type:               ConditionCycled,
+		Status:             metav1.ConditionFalse,
+		Reason:             "Unknown",
+		Message:            "The last VPN cycle ended with a reason the operator does not recognise",
+		ObservedGeneration: generation,
+	}
+	if slices.Contains(cycleReasons, cycle.Reason) {
+		cond.Reason = cycle.Reason
+		cond.Message = "The last VPN cycle ended " + cycle.Reason
+	}
+	if cycle.Reason == egress.ReasonSucceeded {
+		cond.Status = metav1.ConditionTrue
+	}
+	return cond
+}
+
+// cycleReasons are the reasons a cycle ends with, which the agent defines.
+var cycleReasons = []string{egress.ReasonSucceeded, egress.ReasonIPUnchanged, egress.ReasonEmptyIP, egress.ReasonTimeout, egress.ReasonGluetunError}

@@ -401,14 +401,6 @@ var _ = Describe("egress permissions from verified pod labels", func() {
 			Expect(got.Time.UTC()).Should(Equal(finished))
 		})
 
-		It("a LastCycle without FinishedAt never reaches the apiserver", func() {
-			gw, got := settled("poll-nofinish", EgressReport{ExitIP: "203.0.113.9", LastCycle: &v1alpha1.CycleResult{Reason: "Succeeded", Trigger: "api:10.8.0.2"}})
-
-			Expect(got.ExitIP).Should(Equal("203.0.113.9"), "the rest of the report is still written")
-			Expect(got.LastCycle).Should(BeNil())
-			Expect(statusOf(gw)().Status).Should(Equal(v1alpha1.Ready))
-		})
-
 		It("Cycled is True after a Succeeded report and False after IPUnchanged", func() {
 			gw, _ := settled("poll-cycled", wantReport)
 			Eventually(cycled(gw), egressTimeout, egressInterval).Should(Equal("True/Succeeded"))

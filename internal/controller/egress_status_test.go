@@ -2,10 +2,13 @@ package controllers
 
 import (
 	"context"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jacaudi/tunnel-operator/api/v1alpha1"
+	"github.com/jacaudi/tunnel-operator/internal/agent/egress"
 
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -199,4 +202,48 @@ func lastCycleOf(e *v1alpha1.EgressStatus) *v1alpha1.CycleResult {
 		return nil
 	}
 	return e.LastCycle
+}
+
+// TestCycledConditionIsBounded pins what the agent can make the Cycled condition carry. The CRD rejects a
+// condition whose reason is not an identifier or whose message exceeds 32768 characters, and a rejected
+// status write fails every later pass, because the agent keeps reporting the same cycle. The trigger is
+// "annotation:" plus a raw annotation value of up to 256 KiB.
+func TestCycledConditionIsBounded(t *testing.T) {
+	crdReason := regexp.MustCompile(`^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$`)
+	finished := metav1.NewTime(time.Date(2026, time.November, 8, 12, 0, 0, 0, time.UTC))
+	tests := []struct {
+		name       string
+		cycle      v1alpha1.CycleResult
+		wantStatus metav1.ConditionStatus
+		wantReason string
+	}{
+		{"a known reason is kept", v1alpha1.CycleResult{Reason: egress.ReasonTimeout, Trigger: "api:10.8.0.2", FinishedAt: finished}, metav1.ConditionFalse, egress.ReasonTimeout},
+		{"an unknown reason becomes Unknown", v1alpha1.CycleResult{Reason: "not a reason!", Trigger: "api:10.8.0.2", FinishedAt: finished}, metav1.ConditionFalse, "Unknown"},
+		{"an empty reason becomes Unknown", v1alpha1.CycleResult{Trigger: "api:10.8.0.2", FinishedAt: finished}, metav1.ConditionFalse, "Unknown"},
+		{"a 40 KB trigger stays within the message limit", v1alpha1.CycleResult{Reason: egress.ReasonSucceeded, Trigger: "annotation:" + strings.Repeat("x", 40<<10), FinishedAt: finished}, metav1.ConditionTrue, egress.ReasonSucceeded},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var st v1alpha1.WireguardStatus
+
+			applyEgress(&st, 1, &egressUpdate{Report: &EgressReport{LastCycle: &tt.cycle}})
+
+			cond := meta.FindStatusCondition(st.Conditions, ConditionCycled)
+			if cond == nil {
+				t.Fatal("no Cycled condition")
+			}
+			if cond.Status != tt.wantStatus || cond.Reason != tt.wantReason {
+				t.Errorf("Cycled = %s/%s, want %s/%s", cond.Status, cond.Reason, tt.wantStatus, tt.wantReason)
+			}
+			if !crdReason.MatchString(cond.Reason) {
+				t.Errorf("Cycled reason %q does not match the CRD pattern", cond.Reason)
+			}
+			if n := len(cond.Message); n > 32768 {
+				t.Errorf("Cycled message is %d characters, want at most 32768", n)
+			}
+			if got := st.Egress.LastCycle.Trigger; got != tt.cycle.Trigger {
+				t.Errorf("status.egress.lastCycle.trigger was altered (%d characters, want %d): the CRD sets no limit on it", len(got), len(tt.cycle.Trigger))
+			}
+		})
+	}
 }

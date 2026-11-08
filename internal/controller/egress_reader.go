@@ -38,6 +38,13 @@ type EgressReport struct {
 	LastHandledAnnotation string                `json:"lastHandledAnnotation"`
 }
 
+// egressHTTP polls the agents: it follows no redirect, so a 302 is a non-200, and uses no proxy from the
+// environment. Keep-alives are off because each pod is read once per requeue.
+var egressHTTP = &http.Client{
+	Transport:     &http.Transport{DisableKeepAlives: true},
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
+
 // HTTPEgressReader GETs http://<podIP>:8080/egress. Timeout bounds the whole request and must be positive.
 type HTTPEgressReader struct {
 	Timeout time.Duration
@@ -55,7 +62,7 @@ func (h HTTPEgressReader) Read(ctx context.Context, podIP string) (EgressReport,
 	if err != nil {
 		return EgressReport{}, fmt.Errorf("read egress status: %w", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := egressHTTP.Do(req)
 	if err != nil {
 		return EgressReport{}, fmt.Errorf("read egress status: %w", err)
 	}
