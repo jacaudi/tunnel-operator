@@ -35,8 +35,10 @@ var egressChains = []egressChain{
 	{"filter", "OUTPUT", resources.ChainOutput},
 }
 
-// EnsureEgress creates the agent's chains, puts one jump to each at position 1 of its built-in chain,
-// and refills the chains from r in one atomic iptables-restore. It records the result for Err.
+// EnsureEgress creates the agent's chains, inserts a jump to each at position 1 of its built-in
+// chain if absent (a jump that drifted down the chain is not moved back), and refills the chains
+// from r with one iptables-restore call, atomic per table, not across the nat and filter tables.
+// It records the result for Err.
 func (d *Datapath) EnsureEgress(ctx context.Context, r EgressRules) error {
 	d.ensure.Lock()
 	defer d.ensure.Unlock()

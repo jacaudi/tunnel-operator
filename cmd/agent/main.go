@@ -5,7 +5,9 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,7 +16,9 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/go-logr/stdr"
 	"github.com/jacaudi/tunnel-operator/internal/agent"
+	"github.com/jacaudi/tunnel-operator/internal/agent/egress"
 	"github.com/jacaudi/tunnel-operator/internal/datapath"
+	"github.com/jacaudi/tunnel-operator/internal/ipam"
 	"github.com/jacaudi/tunnel-operator/internal/resources"
 	"github.com/jacaudi/tunnel-operator/internal/sidecar"
 	"github.com/jacaudi/tunnel-operator/internal/wireguard"
@@ -76,6 +80,8 @@ func main() {
 	stdr.SetVerbosity(verbosity)
 	log := stdr.NewWithOptions(log.New(os.Stderr, "", log.LstdFlags), stdr.Options{LogCaller: stdr.All})
 	log = log.WithName("agent")
+	// The egress engine logs through slog's default logger.
+	slog.SetDefault(slog.New(logr.ToSlogHandler(log)))
 
 	wg := wireguard.Wireguard{
 		Logger:                            log.WithName("wireguard"),
@@ -89,6 +95,28 @@ func main() {
 
 	dp := datapath.New()
 
+	// An empty key is not fatal: the API still serves, and every cycle fails as GluetunError.
+	gluetunAPIKey := os.Getenv("GLUETUN_API_KEY")
+	if gluetunAPIKey == "" {
+		log.Info("GLUETUN_API_KEY is empty: every VPN cycle will fail as GluetunError")
+	}
+	engine := &egress.Engine{
+		// No client-wide timeout: every call carries its own context, bounded by the engine.
+		G:        &egress.Gluetun{BaseURL: "http://" + resources.GluetunControlAddress, APIKey: gluetunAPIKey, HTTP: &http.Client{}},
+		Deadline: resources.CycleDeadline,
+		Cooldown: resources.CycleCooldown,
+	}
+	httpLog := log.WithName("http")
+	peerState := func() agent.State {
+		state, _, err := agent.GetDesiredState(configFilePath)
+		if err != nil {
+			httpLog.Error(err, "egress API cannot read the server state; refusing every caller")
+		}
+		return state
+	}
+	peers := &egress.PeerListener{Handler: egress.PeerAPIHandler(engine, peerState), Port: resources.EgressAPIPort}
+	pass := &asserter{dp: dp, engine: engine, peers: peers, log: log}
+
 	close, err := agent.OnStateChange(configFilePath, log.WithName("onStateChange"), func(state agent.State) {
 		log.Info("Received a new state")
 		err := wg.Sync(state)
@@ -96,9 +124,7 @@ func main() {
 			log.Error(err, "Error while sycncing wireguard")
 			return
 		}
-		if err := dp.Ensure(ctx, agent.PeerCIDR(state)); err != nil {
-			log.Error(err, "Error while asserting the datapath")
-		}
+		pass.assert(ctx, state)
 	})
 
 	if err != nil {
@@ -111,11 +137,10 @@ func main() {
 	gluetunClient := &http.Client{Timeout: 2 * time.Second}
 	gluetunHealthURL := "http://" + resources.GluetunHealthAddress + "/"
 
-	go reassert(ctx, dp, configFilePath, log)
+	go reassert(ctx, pass, configFilePath)
 
-	httpLog := log.WithName("http")
-
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		state, _, err := agent.GetDesiredState(configFilePath)
 
 		if err != nil {
@@ -146,16 +171,21 @@ func main() {
 			return
 		}
 
-		if err := datapath.CheckPeerPath(agent.PeerCIDR(state)); err != nil {
-			httpLog.Error(err, "agent is not ready as peer traffic would not reach the tunnel")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
+		// During a VPN cycle gluetun is down on purpose and the peer path may be too. Skipping these
+		// two checks keeps the pod Ready, so the Service keeps its endpoint and handshakes survive.
+		// Egress stays closed meanwhile: the killswitch and the blackhole rule remain in place.
+		if !engine.Snapshot().CycleInProgress {
+			if err := datapath.CheckPeerPath(agent.PeerCIDR(state)); err != nil {
+				httpLog.Error(err, "agent is not ready as peer traffic would not reach the tunnel")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
 
-		if err := agent.GluetunHealthy(r.Context(), gluetunClient, gluetunHealthURL); err != nil {
-			httpLog.Error(err, "agent is not ready as gluetun is not healthy")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
+			if err := agent.GluetunHealthy(r.Context(), gluetunClient, gluetunHealthURL); err != nil {
+				httpLog.Error(err, "agent is not ready as gluetun is not healthy")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
 		}
 
 		httpLog.V(2).Info("agent is ready")
@@ -163,22 +193,17 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	// Timeouts are not optional here. This listener answers the kubelet's health
-	// probes, and with no ReadHeaderTimeout a client that opens a connection and
-	// dribbles header bytes holds a goroutine open indefinitely (Slowloris) —
-	// enough of them and the probe endpoint stops answering, which the kubelet
-	// reads as an unhealthy pod and restarts the tunnel.
-	srv := &http.Server{
-		Addr:              ":8080",
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      10 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
+	mux.Handle("GET /egress", egress.StatusHandler(engine))
+
+	// This listener answers the kubelet's health probes and the operator's egress poll.
+	srv := egress.NewServer(":8080", mux)
 	go func() {
 		<-ctx.Done()
 		log.Info("Shutting down agent")
 		_ = srv.Shutdown(context.Background())
+		if err := peers.Close(context.Background()); err != nil {
+			log.Error(err, "Error while shutting down the egress API")
+		}
 	}()
 
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
@@ -186,9 +211,56 @@ func main() {
 	}
 }
 
-// reassert re-asserts the datapath for the current state every resources.ReassertInterval until ctx
-// is done; a gluetun restart can flush the iptables rules.
-func reassert(ctx context.Context, dp *datapath.Datapath, statePath string, logger logr.Logger) {
+// asserter re-asserts everything the agent owns for a state: the datapath, the egress rules, the
+// egress API listener and the engine's view of gluetun.
+type asserter struct {
+	dp     *datapath.Datapath
+	engine *egress.Engine
+	peers  *egress.PeerListener
+	log    logr.Logger
+}
+
+// assert runs one pass for state. Failures are logged and left to the next pass; the datapath ones
+// also hold /health NotReady through dp.Err.
+func (a *asserter) assert(ctx context.Context, state agent.State) {
+	if err := a.dp.Ensure(ctx, agent.PeerCIDR(state)); err != nil {
+		a.log.Error(err, "Error while asserting the datapath")
+	}
+
+	var tunnelAddr netip.Addr
+	prefix, err := netip.ParsePrefix(agent.PeerCIDR(state))
+	if err == nil {
+		tunnelAddr, err = ipam.ServerAddress(prefix)
+	}
+	if err != nil {
+		a.log.Error(err, "Error while deriving the server tunnel address")
+	}
+	// A bad holder means no forwarding rules, which fails closed.
+	holder, err := netip.ParseAddr(state.Egress.ForwardedPortPeer)
+	if err != nil && state.Egress.ForwardedPortPeer != "" {
+		a.log.Error(err, "Ignoring an invalid forwarded port holder", "holder", state.Egress.ForwardedPortPeer)
+	}
+	rules := datapath.EgressRules{TunnelAddr: tunnelAddr, Holder: holder, Port: a.engine.Snapshot().ForwardedPort}
+	if err := a.dp.EnsureEgress(ctx, rules); err != nil {
+		a.log.Error(err, "Error while asserting the egress rules")
+	}
+
+	// The listener binds only the tunnel address, which exists once wg.Sync has assigned it to wg0;
+	// until then the bind fails and the next pass retries.
+	if tunnelAddr.IsValid() {
+		if err := a.peers.Ensure(tunnelAddr); err != nil {
+			a.log.Error(err, "Error while binding the egress API")
+		}
+	}
+
+	a.engine.Refresh(ctx, state.Egress.StaticPort)
+	a.engine.SelfHeal(ctx)
+	a.engine.HandleAnnotation(state.Egress.CycleRequestedAt, state.Egress.LastHandledAnnotation)
+}
+
+// reassert re-asserts the state every resources.ReassertInterval until ctx is done; a gluetun
+// restart can flush the iptables rules.
+func reassert(ctx context.Context, a *asserter, statePath string) {
 	ticker := time.NewTicker(resources.ReassertInterval)
 	defer ticker.Stop()
 	for {
@@ -199,12 +271,10 @@ func reassert(ctx context.Context, dp *datapath.Datapath, statePath string, logg
 		}
 		state, _, err := agent.GetDesiredState(statePath)
 		if err != nil {
-			logger.Error(err, "Error while reading the state to re-assert the datapath")
+			a.log.Error(err, "Error while reading the state to re-assert the datapath")
 			continue
 		}
-		if err := dp.Ensure(ctx, agent.PeerCIDR(state)); err != nil {
-			logger.Error(err, "Error while re-asserting the datapath")
-		}
+		a.assert(ctx, state)
 	}
 }
 
