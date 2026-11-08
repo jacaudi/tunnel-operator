@@ -2,8 +2,10 @@ package agent
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -164,5 +166,36 @@ func TestPeerCIDR(t *testing.T) {
 				t.Errorf("PeerCIDR = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestStateEgressRoundTrip(t *testing.T) {
+	want := Egress{
+		CycleAllowed:          []string{"10.8.0.2", "10.8.0.3"},
+		ForwardedPortPeer:     "10.8.0.2",
+		StaticPort:            51413,
+		CycleRequestedAt:      "2026-11-08T10:00:00Z",
+		LastHandledAnnotation: "2026-11-07T10:00:00Z",
+	}
+	b, err := json.Marshal(State{ServerPrivateKey: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=", Egress: want})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	got, _, err := GetDesiredState(writeState(t, string(b)))
+	if err != nil {
+		t.Fatalf("GetDesiredState: %v", err)
+	}
+	if !reflect.DeepEqual(got.Egress, want) {
+		t.Errorf("Egress = %+v, want %+v", got.Egress, want)
+	}
+
+	// A state.json written before egress existed has no Egress key and still decodes.
+	old, _, err := GetDesiredState(writeState(t, validState))
+	if err != nil {
+		t.Fatalf("GetDesiredState(state without Egress): %v", err)
+	}
+	if !reflect.DeepEqual(old.Egress, Egress{}) {
+		t.Errorf("Egress = %+v, want the zero value when the key is absent", old.Egress)
 	}
 }
