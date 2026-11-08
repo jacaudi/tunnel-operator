@@ -33,23 +33,37 @@ func rules(peerCIDR netip.Prefix) []rule {
 	}
 }
 
-// Datapath asserts the routes, rules and iptables rules. Ensure may be called concurrently.
+// Datapath asserts the routes, rules and iptables rules. Ensure and EnsureEgress may be called
+// concurrently.
 type Datapath struct {
-	run    func(ctx context.Context, args ...string) error // runs iptables with args
-	ensure sync.Mutex                                      // serializes Ensure
-	mu     sync.Mutex                                      // guards err
-	err    error
+	run       func(ctx context.Context, args ...string) error // runs iptables with args
+	restore   func(ctx context.Context, input []byte) error   // runs iptables-restore --noflush with input
+	ensure    sync.Mutex                                      // serializes Ensure and EnsureEgress
+	mu        sync.Mutex                                      // guards err and egressErr
+	err       error                                           // the last Ensure's result
+	egressErr error                                           // the last EnsureEgress's result
 }
 
 // New returns a Datapath that runs the iptables binary. Err reports "datapath not asserted yet"
 // until the first Ensure.
 func New() *Datapath {
-	return &Datapath{run: runIptables, err: errors.New("datapath not asserted yet")}
+	return &Datapath{run: runIptables, restore: runIptablesRestore, err: errors.New("datapath not asserted yet")}
 }
 
 func runIptables(ctx context.Context, args ...string) error {
 	// #nosec G204 -- args are built from the constant rules above and a parsed netip.Prefix; no caller-supplied string reaches the command, and exec takes argv directly with no shell.
 	out, err := exec.CommandContext(ctx, "iptables", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
+	}
+	return nil
+}
+
+func runIptablesRestore(ctx context.Context, input []byte) error {
+	// #nosec G204 -- the command and its arguments are constants; input goes to stdin, never to argv, and exec takes argv directly with no shell.
+	cmd := exec.CommandContext(ctx, "iptables-restore", "-w", "5", "--noflush")
+	cmd.Stdin = bytes.NewReader(input)
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
 	}
@@ -81,11 +95,18 @@ func (d *Datapath) record(err error) {
 	d.err = err
 }
 
-// Err returns the result of the last Ensure.
+func (d *Datapath) recordEgress(err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.egressErr = err
+}
+
+// Err returns the result of the last Ensure joined with the result of the last EnsureEgress: non-nil
+// if either failed.
 func (d *Datapath) Err() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.err
+	return errors.Join(d.err, d.egressErr)
 }
 
 // ensureIptables asserts the FORWARD policy DROP, then each of rules(p): a rule whose check fails is
