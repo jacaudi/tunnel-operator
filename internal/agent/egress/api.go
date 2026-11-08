@@ -146,10 +146,10 @@ type PeerListener struct {
 	Handler http.Handler
 	Port    int
 
-	mu    sync.Mutex
-	srv   *http.Server
-	addr  netip.Addr // what srv is bound to
-	bound string     // srv's host:port
+	mu   sync.Mutex
+	srv  *http.Server
+	ln   net.Listener // nil when not bound
+	addr netip.Addr   // what ln is bound to; the zero Addr when not bound
 }
 
 // Ensure binds addr:Port unless it already does. When addr changed it closes the old server first,
@@ -161,19 +161,18 @@ func (l *PeerListener) Ensure(addr netip.Addr) error {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.srv != nil && l.addr == addr {
+	if l.ln != nil && l.addr == addr {
 		return nil
 	}
 	if l.srv != nil {
-		_ = l.srv.Close()
-		l.srv, l.bound = nil, ""
+		l.stopLocked()
 	}
 	ln, err := net.Listen("tcp", net.JoinHostPort(addr.String(), strconv.Itoa(l.Port)))
 	if err != nil {
 		return fmt.Errorf("egress API: %w", err)
 	}
 	srv := NewServer(ln.Addr().String(), l.Handler)
-	l.srv, l.addr, l.bound = srv, addr, ln.Addr().String()
+	l.srv, l.ln, l.addr = srv, ln, addr
 	go func() { // ends when Close or a rebind closes srv
 		if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 			slog.Warn("the egress API server stopped", "addr", ln.Addr().String(), "error", err)
@@ -182,24 +181,37 @@ func (l *PeerListener) Ensure(addr netip.Addr) error {
 	return nil
 }
 
+// stopLocked closes the server and its listener and leaves the listener unbound. The listener is
+// closed directly because a server that has not reached Serve yet does not know it.
+func (l *PeerListener) stopLocked() {
+	_ = l.ln.Close()
+	_ = l.srv.Close()
+	l.srv, l.ln, l.addr = nil, nil, netip.Addr{}
+}
+
 // Addr returns the bound host:port, or "" when not bound.
 func (l *PeerListener) Addr() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.bound
+	if l.ln == nil {
+		return ""
+	}
+	return l.ln.Addr().String()
 }
 
 // Close stops the server, waiting for in-flight requests until ctx ends. It is a no-op when not
 // bound.
 func (l *PeerListener) Close(ctx context.Context) error {
 	l.mu.Lock()
-	srv := l.srv
-	l.srv, l.bound = nil, ""
+	srv, ln := l.srv, l.ln
+	l.srv, l.ln, l.addr = nil, nil, netip.Addr{}
 	l.mu.Unlock()
 	if srv == nil {
 		return nil
 	}
-	if err := srv.Shutdown(ctx); err != nil {
+	err := srv.Shutdown(ctx)
+	_ = ln.Close() // a server that has not reached Serve yet does not know ln
+	if err != nil {
 		_ = srv.Close()
 		return fmt.Errorf("egress API: %w", err)
 	}

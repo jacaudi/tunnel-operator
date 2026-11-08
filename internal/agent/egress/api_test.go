@@ -349,3 +349,22 @@ func closeListener(t *testing.T, l *PeerListener) {
 		t.Errorf("Close: %v", err)
 	}
 }
+
+// A server closed before its serve goroutine ran must still refuse connections: the listener is
+// closed directly, not only through the server.
+func TestPeerListenerCloseRefusesAtOnce(t *testing.T) {
+	for range 200 {
+		l := &PeerListener{Handler: http.NotFoundHandler(), Port: 0}
+		if err := l.Ensure(netip.MustParseAddr("127.0.0.1")); err != nil {
+			t.Fatalf("Ensure: %v", err)
+		}
+		addr := l.Addr()
+		if err := l.Close(context.WithoutCancel(t.Context())); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		if conn, err := net.Dial("tcp", addr); err == nil {
+			_ = conn.Close()
+			t.Fatalf("%s still accepts connections after Close", addr)
+		}
+	}
+}

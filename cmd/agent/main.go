@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/netip"
 	"os"
@@ -90,6 +91,15 @@ func main() {
 		WgUserspaceImplementationFallback: wgUserspaceImplementationFallback,
 	}
 
+	// Bind the health port before the first pass: that pass applies state and can take a while, and
+	// the kubelet's TCP liveness probe on this port kills the agent when nothing accepts. The
+	// kernel queues connections until Serve runs below.
+	healthLn, err := net.Listen("tcp", ":8080") //nolint:gosec // G102: the kubelet and the operator reach this by pod IP
+	if err != nil {
+		log.Error(err, "Error while binding the health port")
+		os.Exit(1)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
@@ -115,16 +125,69 @@ func main() {
 		return state
 	}
 	peers := &egress.PeerListener{Handler: egress.PeerAPIHandler(engine, peerState), Port: resources.EgressAPIPort}
-	pass := &asserter{dp: dp, engine: engine, peers: peers, log: log}
 
-	close, err := agent.OnStateChange(configFilePath, log.WithName("onStateChange"), func(state agent.State) {
+	// assertLocal re-asserts what the agent owns on this pod: the datapath, the egress rules and
+	// the egress API listener. It never calls gluetun, so applying a state and the 10 s reassert
+	// never wait on it. Failures are logged and retried on the next pass; the datapath ones also
+	// hold /health NotReady through dp.Err.
+	assertLocal := func(state agent.State) {
+		if err := dp.Ensure(ctx, agent.PeerCIDR(state)); err != nil {
+			log.Error(err, "Error while asserting the datapath")
+		}
+
+		var tunnelAddr netip.Addr
+		prefix, err := netip.ParsePrefix(agent.PeerCIDR(state))
+		if err == nil {
+			tunnelAddr, err = ipam.ServerAddress(prefix)
+		}
+		if err != nil {
+			log.Error(err, "Error while deriving the server tunnel address")
+		}
+		// A bad holder means no forwarding rules, which fails closed.
+		holder, err := netip.ParseAddr(state.Egress.ForwardedPortPeer)
+		if err != nil && state.Egress.ForwardedPortPeer != "" {
+			log.Error(err, "Ignoring an invalid forwarded port holder", "holder", state.Egress.ForwardedPortPeer)
+		}
+		rules := datapath.EgressRules{TunnelAddr: tunnelAddr, Holder: holder, Port: engine.Snapshot().ForwardedPort}
+		if err := dp.EnsureEgress(ctx, rules); err != nil {
+			log.Error(err, "Error while asserting the egress rules")
+		}
+
+		// The listener binds only the tunnel address, which exists once wg.Sync has assigned it to
+		// wg0; until then the bind fails and the next pass retries.
+		if tunnelAddr.IsValid() {
+			if err := peers.Ensure(tunnelAddr); err != nil {
+				log.Error(err, "Error while binding the egress API")
+			}
+		}
+	}
+	// syncGluetun refreshes the engine's cache, restarts a stopped gluetun and starts a cycle the
+	// annotation asks for. It waits on gluetun, so it runs on its own loop below.
+	syncGluetun := func(state agent.State) {
+		engine.Refresh(ctx, state.Egress.StaticPort)
+		engine.SelfHeal(ctx)
+		engine.HandleAnnotation(state.Egress.CycleRequestedAt, state.Egress.LastHandledAnnotation)
+	}
+	// reading runs f on the state file's current content.
+	reading := func(f func(agent.State)) func() {
+		return func() {
+			state, _, err := agent.GetDesiredState(configFilePath)
+			if err != nil {
+				log.Error(err, "Error while reading the state to re-assert")
+				return
+			}
+			f(state)
+		}
+	}
+
+	stopWatching, err := agent.OnStateChange(configFilePath, log.WithName("onStateChange"), func(state agent.State) {
 		log.Info("Received a new state")
 		err := wg.Sync(state)
 		if err != nil {
 			log.Error(err, "Error while sycncing wireguard")
 			return
 		}
-		pass.assert(ctx, state)
+		assertLocal(state)
 	})
 
 	if err != nil {
@@ -132,12 +195,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	defer close()
+	defer stopWatching()
 
 	gluetunClient := &http.Client{Timeout: 2 * time.Second}
 	gluetunHealthURL := "http://" + resources.GluetunHealthAddress + "/"
 
-	go reassert(ctx, pass, configFilePath)
+	// A gluetun restart can flush the iptables rules, so the local pass repeats every tick.
+	go onTick(ctx, reading(assertLocal))
+	// The gluetun loop also runs once now, without blocking anything.
+	go func() {
+		syncState := reading(syncGluetun)
+		syncState()
+		onTick(ctx, syncState)
+	}()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -196,8 +266,10 @@ func main() {
 	mux.Handle("GET /egress", egress.StatusHandler(engine))
 
 	// This listener answers the kubelet's health probes and the operator's egress poll.
-	srv := egress.NewServer(":8080", mux)
+	srv := egress.NewServer(healthLn.Addr().String(), mux)
+	shutdown := make(chan struct{})
 	go func() {
+		defer close(shutdown)
 		<-ctx.Done()
 		log.Info("Shutting down agent")
 		_ = srv.Shutdown(context.Background())
@@ -206,61 +278,16 @@ func main() {
 		}
 	}()
 
-	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+	if err := srv.Serve(healthLn); err != http.ErrServerClosed {
 		log.Error(err, "Health server error")
+		return
 	}
+	// Serve returns as soon as Shutdown is called; wait for the shutdown to finish.
+	<-shutdown
 }
 
-// asserter re-asserts everything the agent owns for a state: the datapath, the egress rules, the
-// egress API listener and the engine's view of gluetun.
-type asserter struct {
-	dp     *datapath.Datapath
-	engine *egress.Engine
-	peers  *egress.PeerListener
-	log    logr.Logger
-}
-
-// assert runs one pass for state. Failures are logged and left to the next pass; the datapath ones
-// also hold /health NotReady through dp.Err.
-func (a *asserter) assert(ctx context.Context, state agent.State) {
-	if err := a.dp.Ensure(ctx, agent.PeerCIDR(state)); err != nil {
-		a.log.Error(err, "Error while asserting the datapath")
-	}
-
-	var tunnelAddr netip.Addr
-	prefix, err := netip.ParsePrefix(agent.PeerCIDR(state))
-	if err == nil {
-		tunnelAddr, err = ipam.ServerAddress(prefix)
-	}
-	if err != nil {
-		a.log.Error(err, "Error while deriving the server tunnel address")
-	}
-	// A bad holder means no forwarding rules, which fails closed.
-	holder, err := netip.ParseAddr(state.Egress.ForwardedPortPeer)
-	if err != nil && state.Egress.ForwardedPortPeer != "" {
-		a.log.Error(err, "Ignoring an invalid forwarded port holder", "holder", state.Egress.ForwardedPortPeer)
-	}
-	rules := datapath.EgressRules{TunnelAddr: tunnelAddr, Holder: holder, Port: a.engine.Snapshot().ForwardedPort}
-	if err := a.dp.EnsureEgress(ctx, rules); err != nil {
-		a.log.Error(err, "Error while asserting the egress rules")
-	}
-
-	// The listener binds only the tunnel address, which exists once wg.Sync has assigned it to wg0;
-	// until then the bind fails and the next pass retries.
-	if tunnelAddr.IsValid() {
-		if err := a.peers.Ensure(tunnelAddr); err != nil {
-			a.log.Error(err, "Error while binding the egress API")
-		}
-	}
-
-	a.engine.Refresh(ctx, state.Egress.StaticPort)
-	a.engine.SelfHeal(ctx)
-	a.engine.HandleAnnotation(state.Egress.CycleRequestedAt, state.Egress.LastHandledAnnotation)
-}
-
-// reassert re-asserts the state every resources.ReassertInterval until ctx is done; a gluetun
-// restart can flush the iptables rules.
-func reassert(ctx context.Context, a *asserter, statePath string) {
+// onTick calls f every resources.ReassertInterval until ctx is done.
+func onTick(ctx context.Context, f func()) {
 	ticker := time.NewTicker(resources.ReassertInterval)
 	defer ticker.Stop()
 	for {
@@ -268,13 +295,8 @@ func reassert(ctx context.Context, a *asserter, statePath string) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			f()
 		}
-		state, _, err := agent.GetDesiredState(statePath)
-		if err != nil {
-			a.log.Error(err, "Error while reading the state to re-assert the datapath")
-			continue
-		}
-		a.assert(ctx, state)
 	}
 }
 
