@@ -131,6 +131,13 @@ func TestPeerStatusMatches(t *testing.T) {
 			mutate: func(p *v1alpha1.WireguardPeer) { p.Status.LocalCIDRs = []string{"10.96.0.0/12"} },
 			want:   false,
 		},
+		{
+			name: "port forwarding condition not yet removed",
+			mutate: func(p *v1alpha1.WireguardPeer) {
+				p.Status.Conditions = append(p.Status.Conditions, metav1.Condition{Type: ConditionPortForwarding, Status: metav1.ConditionTrue, Reason: ReasonHeld})
+			},
+			want: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -221,9 +228,10 @@ func TestDesiredStateIgnoresStatusAndMetadata(t *testing.T) {
 				Status:     v1alpha1.WireguardPeerStatus{Address: "10.9.0.3"},
 			},
 		},
+		Egress: agent.Egress{},
 	}
 
-	got := desiredState(wg, privateKey, peers)
+	got := desiredState(wg, privateKey, peers, agent.Egress{})
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("desiredState() = %+v, want %+v", got, want)
 	}
@@ -244,7 +252,7 @@ func TestDesiredStateIgnoresStatusAndMetadata(t *testing.T) {
 		peers[i].Labels["probe.test/nudge"] = "changed"
 		peers[i].Status.Conditions[0].Reason = "Changed"
 	}
-	after, err := json.Marshal(desiredState(wg, privateKey, peers))
+	after, err := json.Marshal(desiredState(wg, privateKey, peers, agent.Egress{}))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -610,7 +618,7 @@ func TestDesiredStateDropsGluetun(t *testing.T) {
 		},
 	}
 
-	got := desiredState(wg, "k", nil).Server.Spec
+	got := desiredState(wg, "k", nil, agent.Egress{}).Server.Spec
 	want := v1alpha1.WireguardSpec{LocalCIDRs: []string{"10.96.0.0/12"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("desiredState().Server.Spec = %+v, want %+v", got, want)

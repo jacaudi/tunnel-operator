@@ -336,11 +336,13 @@ func (r *WireguardReconciler) markPeerNotReady(ctx context.Context, peer *v1alph
 	}
 	peer.Status.Status = nr.Status
 	peer.Status.Message = nr.Message
-	// A not-ready peer (not admitted, or a dedupe loser) releases its address and the gateway identity.
+	// A not-ready peer (not admitted, or a dedupe loser) releases its address, the gateway identity and any
+	// PortForwarding condition: it is not eligible for the port.
 	peer.Status.Address = ""
 	peer.Status.Endpoint = ""
 	peer.Status.ServerPublicKey = ""
 	peer.Status.LocalCIDRs = nil
+	meta.RemoveStatusCondition(&peer.Status.Conditions, ConditionPortForwarding)
 	meta.SetStatusCondition(&peer.Status.Conditions, metav1.Condition{
 		Type:               ConditionReady,
 		Status:             metav1.ConditionFalse,
@@ -536,11 +538,23 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// fetch secret
 	secret := &corev1.Secret{}
 	err = r.Get(ctx, types.NamespacedName{Name: wireguard.Name, Namespace: wireguard.Namespace}, secret)
+
+	// egress
+	//
+	// The current forwarded-port holder is read back from state.json, so the port stays where it is while
+	// its peer is still eligible. No Secret, or an unreadable state, names no holder.
+	var stored agent.State
+	_ = json.Unmarshal(secret.Data["state.json"], &stored)
+	egress, portReasons, egressErr := r.desiredEgress(ctx, wireguard, admitted, stored.Egress.ForwardedPortPeer)
+	if egressErr != nil {
+		return ctrl.Result{}, egressErr
+	}
+
 	// secret already created
 	if err == nil {
 		privateKey := string(secret.Data["privateKey"])
 
-		state := desiredState(wireguard, privateKey, admitted)
+		state := desiredState(wireguard, privateKey, admitted, egress)
 
 		b, err := json.Marshal(state)
 		if err != nil {
@@ -614,7 +628,7 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		gluetunAPIKey := resources.NewGluetunAPIKey()
 
-		state := desiredState(wireguard, privateKey, admitted)
+		state := desiredState(wireguard, privateKey, admitted, egress)
 
 		b, err := json.Marshal(state)
 		if err != nil {
@@ -660,6 +674,9 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	if err := r.syncPeerIdentity(ctx, wireguard, *identity, admitted); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.syncPortForwarding(ctx, admitted, portReasons); err != nil {
 		return ctrl.Result{}, err
 	}
 
