@@ -9,6 +9,7 @@ import (
 
 	"github.com/jacaudi/tunnel-operator/api/v1alpha1"
 	"github.com/jacaudi/tunnel-operator/internal/agent"
+	"github.com/jacaudi/tunnel-operator/internal/ipam"
 
 	wgtypes "golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -239,7 +240,11 @@ func addressUsable(addr, cidr4 string) bool {
 		return false
 	}
 	p = p.Masked()
-	return p.Contains(a) && a != p.Addr() && a != p.Addr().Next()
+	srv, err := ipam.ServerAddress(p)
+	if err != nil {
+		return false
+	}
+	return p.Contains(a) && a != p.Addr() && a != srv
 }
 
 // conflictLoser is a peer that must give up a value (its status.address or its spec.publicKey) to

@@ -15,6 +15,7 @@ import (
 
 	"github.com/jacaudi/tunnel-operator/api/v1alpha1"
 	"github.com/jacaudi/tunnel-operator/internal/agent"
+	"github.com/jacaudi/tunnel-operator/internal/ipam"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 	"golang.zx2c4.com/wireguard/wgctrl"
@@ -294,16 +295,15 @@ func (wg *Wireguard) Sync(state agent.State) error {
 		return fmt.Errorf("failed to parse IPv4 CIDR %q: %w", cidr4, err)
 	}
 
-	_, gw4, err := gatewayIPFromPrefix(prefix4)
+	addr, err := ipam.ServerAddress(prefix4)
 	if err != nil {
 		return err
 	}
 
-	addr, _ := netip.AddrFromSlice(gw4.To4())
 	if err := SyncAddress(wg.Iface, netip.PrefixFrom(addr, 32)); err != nil {
 		return err
 	}
-	if err := syncRoute(wg.Iface, cidr4, gw4, syscall.AF_INET); err != nil {
+	if err := syncRoute(wg.Iface, cidr4, net.IP(addr.AsSlice()), syscall.AF_INET); err != nil {
 		return err
 	}
 
@@ -323,22 +323,6 @@ func getIP(ip string) ([]net.IPNet, error) {
 	}
 
 	return []net.IPNet{*ipnet}, nil
-}
-
-func gatewayIPFromPrefix(prefix netip.Prefix) (*net.IPNet, net.IP, error) {
-	prefix = prefix.Masked()
-	addr := prefix.Addr()
-
-	if !addr.Is4() {
-		return nil, nil, fmt.Errorf("unsupported address family for prefix %q", prefix.String())
-	}
-	gw := addr.Next()
-	if !gw.Is4() {
-		return nil, nil, fmt.Errorf("failed to derive IPv4 gateway for prefix %q", prefix.String())
-	}
-	b := gw.As4()
-	ip := net.IPv4(b[0], b[1], b[2], b[3])
-	return &net.IPNet{IP: ip, Mask: net.CIDRMask(32, 32)}, ip, nil
 }
 
 // allowedIPsEqual reports whether a and b hold the same networks in the same order.

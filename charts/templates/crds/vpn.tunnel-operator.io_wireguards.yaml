@@ -19,6 +19,12 @@ spec:
         - jsonPath: .status.status
           name: Status
           type: string
+        - jsonPath: .status.egress.exitIP
+          name: Exit IP
+          type: string
+        - jsonPath: .status.egress.forwardedPort
+          name: Port
+          type: integer
         - jsonPath: .metadata.creationTimestamp
           name: Age
           type: date
@@ -321,6 +327,18 @@ spec:
                             x-kubernetes-map-type: atomic
                         type: object
                       type: array
+                    portForwarding:
+                      description: PortForwarding configures the forwarded port the operator routes to the holder pod.
+                      properties:
+                        staticPort:
+                          description: |-
+                            StaticPort is a provider-assigned fixed forwarded port (for example from AirVPN's dashboard).
+                            When set, the agent forwards it instead of asking gluetun.
+                          format: int32
+                          maximum: 65535
+                          minimum: 1
+                          type: integer
+                      type: object
                     resources:
                       description: Resources are the gluetun container's requests and limits.
                       properties:
@@ -506,6 +524,52 @@ spec:
                   x-kubernetes-list-map-keys:
                     - type
                   x-kubernetes-list-type: map
+                egress:
+                  description: Egress is what gluetun reports for this server, refreshed about every 30 s.
+                  properties:
+                    exitIP:
+                      description: ExitIP is the public IP the server egresses from.
+                      type: string
+                    forwardedPort:
+                      description: |-
+                        ForwardedPort is the provider-forwarded port in use: spec.gluetun.portForwarding.staticPort when
+                        set, else the port gluetun reports.
+                      format: int32
+                      type: integer
+                    forwardedPortPeer:
+                      description: ForwardedPortPeer is the peer holding the forwarded port, as <namespace>/<peer name>.
+                      type: string
+                    lastCycle:
+                      description: LastCycle is the most recent VPN cycle the agent finished.
+                      properties:
+                        finishedAt:
+                          description: FinishedAt is when the cycle finished, truncated to seconds.
+                          format: date-time
+                          type: string
+                        newExitIP:
+                          description: NewExitIP is the exit IP after the cycle.
+                          type: string
+                        oldExitIP:
+                          description: OldExitIP is the exit IP before the cycle.
+                          type: string
+                        reason:
+                          description: Reason is Succeeded, IPUnchanged, EmptyIP, Timeout or GluetunError.
+                          type: string
+                        trigger:
+                          description: 'Trigger is what started the cycle: api:<peer address> or annotation:<value>.'
+                          type: string
+                      required:
+                        - finishedAt
+                        - reason
+                        - trigger
+                      type: object
+                    lastHandledAnnotation:
+                      description: LastHandledAnnotation is the last tunnel-operator.io/cycle-requested-at value the agent acted on.
+                      type: string
+                  type: object
+                egressAPI:
+                  description: 'EgressAPI is the egress API URL attached pods call: http://<server tunnel address>:8081.'
+                  type: string
                 endpoint:
                   description: |-
                     Endpoint is the address a client dials: the server Service's ClusterIP and the WireGuard port,
