@@ -75,8 +75,11 @@ type WireguardPodSpec struct {
 }
 
 // GluetunSpec is passed through to the gluetun container. The operator renders the variables its
-// routing depends on (VPN_TYPE, VPN_INTERFACE, the firewall settings, HEALTH_SERVER_ADDRESS and
-// WIREGUARD_MTU) and reports Degraded if env or a referenced Secret sets one of them.
+// routing depends on (VPN_TYPE, VPN_INTERFACE, the firewall settings, HEALTH_SERVER_ADDRESS,
+// WIREGUARD_MTU, HTTP_CONTROL_SERVER_ADDRESS, HTTP_CONTROL_SERVER_AUTH_CONFIG_FILEPATH,
+// HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE and VPN_PORT_FORWARDING_LISTENING_PORT) and reports Degraded if
+// env or a referenced Secret sets one of them. Other HTTP_CONTROL_SERVER_* variables, such as
+// HTTP_CONTROL_SERVER_LOG, are not reserved.
 type GluetunSpec struct {
 	// Env is passed through to the gluetun container, after the variables the operator renders.
 	// +optional
@@ -88,6 +91,19 @@ type GluetunSpec struct {
 	// Resources are the gluetun container's requests and limits.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+	// PortForwarding configures the forwarded port the operator routes to the holder pod.
+	// +optional
+	PortForwarding *PortForwardingSpec `json:"portForwarding,omitempty"`
+}
+
+// PortForwardingSpec configures the forwarded port.
+type PortForwardingSpec struct {
+	// StaticPort is a provider-assigned fixed forwarded port (for example from AirVPN's dashboard).
+	// When set, the agent forwards it instead of asking gluetun.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +optional
+	StaticPort int32 `json:"staticPort,omitempty"`
 }
 
 // WireguardStatus defines the observed state of Wireguard
@@ -108,11 +124,48 @@ type WireguardStatus struct {
 	// +listType=map
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
+	// EgressAPI is the egress API URL attached pods call: http://<server tunnel address>:8081.
+	EgressAPI string `json:"egressAPI,omitempty"`
+	// Egress is what gluetun reports for this server, refreshed about every 30 s.
+	// +optional
+	Egress *EgressStatus `json:"egress,omitempty"`
+}
+
+// EgressStatus is the egress state the gateway agent reports for a server.
+type EgressStatus struct {
+	// ExitIP is the public IP the server egresses from.
+	ExitIP string `json:"exitIP,omitempty"`
+	// ForwardedPort is the provider-forwarded port in use: spec.gluetun.portForwarding.staticPort when
+	// set, else the port gluetun reports.
+	ForwardedPort int32 `json:"forwardedPort,omitempty"`
+	// ForwardedPortPeer is the peer holding the forwarded port, as <namespace>/<peer name>.
+	ForwardedPortPeer string `json:"forwardedPortPeer,omitempty"`
+	// LastCycle is the most recent VPN cycle the agent finished.
+	// +optional
+	LastCycle *CycleResult `json:"lastCycle,omitempty"`
+	// LastHandledAnnotation is the last tunnel-operator.io/cycle-requested-at value the agent acted on.
+	LastHandledAnnotation string `json:"lastHandledAnnotation,omitempty"`
+}
+
+// CycleResult is the outcome of one VPN cycle.
+type CycleResult struct {
+	// Reason is Succeeded, IPUnchanged, EmptyIP, Timeout or GluetunError.
+	Reason string `json:"reason"`
+	// OldExitIP is the exit IP before the cycle.
+	OldExitIP string `json:"oldExitIP,omitempty"`
+	// NewExitIP is the exit IP after the cycle.
+	NewExitIP string `json:"newExitIP,omitempty"`
+	// Trigger is what started the cycle: api:<peer address> or annotation:<value>.
+	Trigger string `json:"trigger"`
+	// FinishedAt is when the cycle finished, truncated to seconds.
+	FinishedAt metav1.Time `json:"finishedAt"`
 }
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
 //+kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
+// +kubebuilder:printcolumn:name="Exit IP",type=string,JSONPath=`.status.egress.exitIP`
+// +kubebuilder:printcolumn:name="Port",type=integer,JSONPath=`.status.egress.forwardedPort`
 //+kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // Wireguard is the Schema for the wireguards API

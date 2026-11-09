@@ -73,8 +73,8 @@ func (a *Allocator) GetUsedIPs(cidr string, peers *v1alpha1.WireguardPeerList) [
 }
 
 // deriveReservedIPs returns a slice containing the network address and the first
-// host address derived from the given CIDR. If the CIDR cannot be parsed, it
-// returns an empty slice and leaves validation to callers of AllocateIP.
+// host address derived from the given CIDR. If the CIDR cannot be parsed or has no server address
+// (see ServerAddress), it returns an empty slice and leaves validation to callers of AllocateIP.
 func deriveReservedIPs(cidr string) []string {
 	if cidr == "" {
 		return []string{}
@@ -85,11 +85,27 @@ func deriveReservedIPs(cidr string) []string {
 		return []string{}
 	}
 
-	prefix = prefix.Masked()
-	network := prefix.Addr()
-	gateway := network.Next()
+	gateway, err := ServerAddress(prefix)
+	if err != nil {
+		return []string{}
+	}
 
-	return []string{network.String(), gateway.String()}
+	return []string{prefix.Masked().Addr().String(), gateway.String()}
+}
+
+// ServerAddress returns the server's tunnel address within prefix: the masked prefix's first host.
+// It is the single source for that address; the agent configures wg0 with it and the operator
+// reserves it and builds the egress API URL from it. A non-IPv4 prefix, or one with fewer than four
+// addresses (no network, server, peer and broadcast), is an error.
+func ServerAddress(prefix netip.Prefix) (netip.Addr, error) {
+	prefix = prefix.Masked()
+	if !prefix.Addr().Is4() {
+		return netip.Addr{}, fmt.Errorf("server address: prefix %q is not IPv4", prefix)
+	}
+	if prefix.Bits() > 30 {
+		return netip.Addr{}, fmt.Errorf("server address: prefix %q has fewer than 4 addresses", prefix)
+	}
+	return prefix.Addr().Next(), nil
 }
 
 // isUsed checks if an IP address is in the list of used IPs.

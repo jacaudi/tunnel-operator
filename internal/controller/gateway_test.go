@@ -169,6 +169,23 @@ func TestReservedInEnv(t *testing.T) {
 	}
 }
 
+// The four variables that lock gluetun's control server behind the agent's key. A user setting any of
+// them, inline or through envFrom, would open the server or move it out from under the agent.
+func TestIsReservedGluetunEnvCoversTheControlServer(t *testing.T) {
+	for _, name := range []string{
+		"HTTP_CONTROL_SERVER_ADDRESS",
+		"HTTP_CONTROL_SERVER_AUTH_CONFIG_FILEPATH",
+		"HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE",
+		"VPN_PORT_FORWARDING_LISTENING_PORT",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !isReservedGluetunEnv(name) {
+				t.Errorf("isReservedGluetunEnv(%q) = false, want true", name)
+			}
+		})
+	}
+}
+
 func TestReservedInKeys(t *testing.T) {
 	tests := []struct {
 		name   string

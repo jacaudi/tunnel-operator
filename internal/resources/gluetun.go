@@ -28,6 +28,11 @@ const (
 	// gluetunRuleTable is the routing table gluetun's WireGuard mode installs its `ip rule` for; a
 	// rule left by an abrupt exit makes gluetun's next start fail with "file exists".
 	gluetunRuleTable = 51820
+
+	// gluetunAuthVolume is the pod volume holding the roles file, mounted at gluetunAuthDir as gluetunAuthFile.
+	gluetunAuthVolume = "gluetun-auth"
+	gluetunAuthDir    = "/gluetun/auth"
+	gluetunAuthFile   = "config.toml"
 )
 
 // ReservedGluetunEnv returns the gluetun variables the operator renders, in a fixed order. The
@@ -41,6 +46,13 @@ func ReservedGluetunEnv(localCIDRs []string) []corev1.EnvVar {
 		{Name: "FIREWALL_OUTBOUND_SUBNETS", Value: strings.Join(localCIDRs, ",")},
 		{Name: "HEALTH_SERVER_ADDRESS", Value: GluetunHealthAddress},
 		{Name: "WIREGUARD_MTU", Value: strconv.Itoa(TunnelMTU)},
+		// The control server answers only the agent: it listens on loopback and every route needs the
+		// agent's key. An empty default role means a route the file does not name returns 401.
+		{Name: "HTTP_CONTROL_SERVER_ADDRESS", Value: GluetunControlAddress},
+		{Name: "HTTP_CONTROL_SERVER_AUTH_CONFIG_FILEPATH", Value: gluetunAuthDir + "/" + gluetunAuthFile},
+		{Name: "HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE", Value: "{}"},
+		// Rendered empty: gluetun's REDIRECT to this port would compete with the agent's DNAT.
+		{Name: "VPN_PORT_FORWARDING_LISTENING_PORT", Value: ""},
 	}
 }
 

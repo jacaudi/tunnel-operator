@@ -27,6 +27,9 @@ const (
 	// exitHTTPPort is http-echo's default port; the image runs as non-root and cannot bind :80.
 	exitHTTPPort = 5678
 	curlImage    = "curlimages/curl:8.17.0"
+	// busyboxImage is pinned by digest: its nc is the forwarded-port listener and sender, and the digest keeps
+	// that applet set from moving under the suite.
+	busyboxImage = "busybox:1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec"
 	// kindLocalCIDRs is a YAML flow list covering kind's node, pod and Service ranges (and GitHub
 	// runners' Docker network), overlapping neither the peer CIDR 10.8.0.0/24 nor the exit tunnel.
 	kindLocalCIDRs = "[10.244.0.0/16, 10.96.0.0/12, 172.16.0.0/12]"
@@ -35,8 +38,9 @@ const (
 // exitNodeManifests returns the exit node: a Secret exit-key holding exitPrivateKey, a Deployment exit
 // whose pod runs a privileged sysctl init (ip_forward=1), a wg container (agentImage) that brings up
 // wg0 at exitTunnelAddress with gluetun as its only peer, masquerades -o eth0 and adds exitAddress to
-// lo, and an echo container (httpEchoImage, args -text=exit, listening on exitHTTPPort); and a ClusterIP Service exit on
-// UDP 51820.
+// lo, an echo container (httpEchoImage, args -text=exit, listening on exitHTTPPort) and a send container
+// (busyboxImage, sleep infinity) that shares the pod's wg0 to dial gluetun's tunnel address; and a ClusterIP
+// Service exit on UDP 51820.
 func exitNodeManifests() string {
 	return fmt.Sprintf(`apiVersion: v1
 kind: Secret
@@ -84,16 +88,24 @@ spec:
       - name: echo
         image: %[7]s
         args: ["-text=exit"]
+      - name: send
+        image: %[8]s
+        command: ["sleep", "infinity"]
       volumes: [{name: keys, secret: {secretName: exit-key}}]
-`, exitPrivateKey, agentImage, gluetunPublicKey, gluetunTunnelAddress, exitTunnelAddress, exitAddress, httpEchoImage)
+`, exitPrivateKey, agentImage, gluetunPublicKey, gluetunTunnelAddress, exitTunnelAddress, exitAddress, httpEchoImage, busyboxImage)
 }
 
 // gatewayManifests returns a Secret gluetun-key holding WIREGUARD_PRIVATE_KEY=gluetunPrivateKey and the
 // Wireguard vpn: localCIDRs kindLocalCIDRs; gluetun env VPN_SERVICE_PROVIDER=custom,
 // WIREGUARD_ENDPOINT_IP=exitIP, WIREGUARD_ENDPOINT_PORT=51820, WIREGUARD_PUBLIC_KEY=exitPublicKey,
 // WIREGUARD_ADDRESSES=gluetunTunnelAddress, HEALTH_TARGET_ADDRESSES=<exitAddress>:<exitHTTPPort> and
-// HEALTH_ICMP_TARGET_IPS=exitAddress; envFrom the gluetun-key Secret.
-func gatewayManifests(exitIP string) string {
+// HEALTH_ICMP_TARGET_IPS=exitAddress; envFrom the gluetun-key Secret; and, when staticPort > 0,
+// spec.gluetun.portForwarding.staticPort=staticPort.
+func gatewayManifests(exitIP string, staticPort int32) string {
+	portForwarding := ""
+	if staticPort > 0 {
+		portForwarding = fmt.Sprintf("    portForwarding: {staticPort: %d}\n", staticPort)
+	}
 	return fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata: {name: gluetun-key}
@@ -115,7 +127,7 @@ spec:
     - {name: HEALTH_ICMP_TARGET_IPS, value: "%s"}
     envFrom:
     - secretRef: {name: gluetun-key}
-`, gluetunPrivateKey, kindLocalCIDRs, exitIP, exitPublicKey, gluetunTunnelAddress, exitAddress, exitHTTPPort, exitAddress)
+%s`, gluetunPrivateKey, kindLocalCIDRs, exitIP, exitPublicKey, gluetunTunnelAddress, exitAddress, exitHTTPPort, exitAddress, portForwarding)
 }
 
 // testPeerManifests returns the WireguardPeer peer20 (wireguardRef vpn, publicKey testPeerPublicKey).

@@ -108,6 +108,16 @@ func (b *DeploymentBuilder) ForWireguard(wg *v1alpha1.Wireguard) (*appsv1.Deploy
 								},
 							},
 						},
+						{
+							// Only the roles file: the Secret's other keys are the agent's, not gluetun's.
+							Name: gluetunAuthVolume,
+							VolumeSource: corev1.VolumeSource{
+								Secret: &corev1.SecretVolumeSource{
+									SecretName: wg.Name,
+									Items:      []corev1.KeyToPath{{Key: SecretKeyGluetunAuth, Path: gluetunAuthFile}},
+								},
+							},
+						},
 					},
 					InitContainers: []corev1.Container{b.ipForwardInitContainer()},
 					Containers: []corev1.Container{
@@ -156,7 +166,19 @@ func (b *DeploymentBuilder) agentContainer(wg *v1alpha1.Wireguard, readOnlyRootF
 				Name:          "http",
 				Protocol:      corev1.ProtocolTCP,
 			},
+			{
+				ContainerPort: EgressAPIPort,
+				Name:          "egress-api",
+				Protocol:      corev1.ProtocolTCP,
+			},
 		},
+		Env: []corev1.EnvVar{{
+			Name: EnvGluetunAPIKey,
+			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: wg.Name},
+				Key:                  SecretKeyGluetunAPIKey,
+			}},
+		}},
 		ReadinessProbe: &corev1.Probe{
 			// /health syncs wg0 and polls gluetun's health server; the 1 s default is too short for both.
 			TimeoutSeconds: 5,
@@ -202,6 +224,10 @@ func (b *DeploymentBuilder) gluetunContainer(wg *v1alpha1.Wireguard) corev1.Cont
 		Env:       append(ReservedGluetunEnv(wg.Spec.LocalCIDRs), wg.Spec.Gluetun.Env...),
 		EnvFrom:   wg.Spec.Gluetun.EnvFrom,
 		Resources: wg.Spec.Gluetun.Resources,
+		VolumeMounts: []corev1.VolumeMount{
+			// A directory mount, not a subPath: a subPath never sees the Secret change.
+			{Name: gluetunAuthVolume, MountPath: gluetunAuthDir, ReadOnly: true},
+		},
 		Lifecycle: &corev1.Lifecycle{
 			PostStart: &corev1.LifecycleHandler{
 				Exec: &corev1.ExecAction{

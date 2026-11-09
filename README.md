@@ -32,6 +32,9 @@ through a ClusterIP Service.
 - **`Wireguard`** — a gateway: a WireGuard server pod with a gluetun container that holds the
   tunnel to your VPN provider. It fails closed by routing, and reads ready only when a peer's packet
   would be forwarded into the tunnel and gluetun is healthy. See [docs/gluetun-egress.md](docs/gluetun-egress.md).
+- **Egress API** — the gateway reports its exit IP and forwarded port, sends the forwarded port to
+  one labelled pod, and lets labelled pods and `kubectl` cycle the VPN for a new exit IP. See
+  [docs/gluetun-egress.md](docs/gluetun-egress.md#egress-api).
 - **`WireguardPeer`** — one client, identified by its public key, in the client's own namespace.
   The operator allocates its address and copies the gateway's endpoint, public key and
   `localCIDRs` into its status. The operator never sees a client's private key.

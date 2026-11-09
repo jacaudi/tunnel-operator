@@ -118,8 +118,8 @@ func TestDesiredStateOrdersPeersByNamespaceWithinAName(t *testing.T) {
 	wg := &v1alpha1.Wireguard{ObjectMeta: metav1.ObjectMeta{Name: "vpn", Namespace: "network"}}
 	a, b := peerIn("alpha", "app", "vpn", "network"), peerIn("beta", "app", "vpn", "network")
 
-	forward := desiredState(wg, "k", []v1alpha1.WireguardPeer{a, b})
-	backward := desiredState(wg, "k", []v1alpha1.WireguardPeer{b, a})
+	forward := desiredState(wg, "k", []v1alpha1.WireguardPeer{a, b}, agent.Egress{})
+	backward := desiredState(wg, "k", []v1alpha1.WireguardPeer{b, a}, agent.Egress{})
 	if !reflect.DeepEqual(forward, backward) {
 		t.Errorf("desiredState() depends on input order:\n forward  %+v\n backward %+v", forward.Peers, backward.Peers)
 	}

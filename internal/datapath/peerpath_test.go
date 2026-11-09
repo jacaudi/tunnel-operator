@@ -20,7 +20,7 @@ func TestPeerProbeSource(t *testing.T) {
 		{in: "10.8.0.0/30", want: "10.8.0.2"},
 		{in: "172.16.4.0/22", want: "172.16.4.2"},
 		{in: "10.8.0.5/24", want: "10.8.0.2"},
-		{in: "10.8.0.0/31", wantErr: "peerCIDR 10.8.0.0/31 has no second host for the peer-path probe"},
+		{in: "10.8.0.0/31", wantErr: `peerCIDR 10.8.0.0/31 has no second host for the peer-path probe: server address: prefix "10.8.0.0/31" has fewer than 4 addresses`},
 		{in: "10.8.0.1/32"},
 	}
 	for _, tt := range tests {

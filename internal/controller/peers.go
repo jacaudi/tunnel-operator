@@ -9,6 +9,7 @@ import (
 
 	"github.com/jacaudi/tunnel-operator/api/v1alpha1"
 	"github.com/jacaudi/tunnel-operator/internal/agent"
+	"github.com/jacaudi/tunnel-operator/internal/ipam"
 
 	wgtypes "golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -142,9 +143,10 @@ func addressPoolExhausted(cidr string) notReady {
 // desiredState renders the agent's state.json content from the server's name, namespace and
 // spec and from each peer's name, namespace, spec.publicKey, spec.wireguardRef and
 // status.address, sorted by peer name, then namespace. No other status field, no metadata and no
-// resourceVersion reach it, so writing them never changes the rendered state. spec.gluetun is dropped: it can carry provider
+// resourceVersion reach it, so writing them never changes the rendered state. egress, the permissions desiredEgress
+// rendered from the peers' pods, is carried as given. spec.gluetun is dropped: it can carry provider
 // credentials, and the agent needs none of it.
-func desiredState(wg *v1alpha1.Wireguard, privateKey string, peers []v1alpha1.WireguardPeer) agent.State {
+func desiredState(wg *v1alpha1.Wireguard, privateKey string, peers []v1alpha1.WireguardPeer, egress agent.Egress) agent.State {
 	spec := *wg.Spec.DeepCopy()
 	spec.Gluetun = v1alpha1.GluetunSpec{}
 	rendered := make([]v1alpha1.WireguardPeer, len(peers))
@@ -166,6 +168,7 @@ func desiredState(wg *v1alpha1.Wireguard, privateKey string, peers []v1alpha1.Wi
 		},
 		ServerPrivateKey: privateKey,
 		Peers:            rendered,
+		Egress:           egress,
 	}
 }
 
@@ -181,8 +184,8 @@ func wireguardForPeer(_ context.Context, obj client.Object) []reconcile.Request 
 
 // peerStatusMatches reports whether peer already records nr: status.status, status.message,
 // no status.address, endpoint, serverPublicKey or localCIDRs (a peer the server cannot admit holds
-// none), and a Ready condition with Status False, nr.Reason, nr.ConditionMessage and
-// ObservedGeneration == peer.Generation.
+// none), no PortForwarding condition (a peer the server cannot admit is not eligible for the port), and a
+// Ready condition with Status False, nr.Reason, nr.ConditionMessage and ObservedGeneration == peer.Generation.
 func peerStatusMatches(peer *v1alpha1.WireguardPeer, nr notReady) bool {
 	c := meta.FindStatusCondition(peer.Status.Conditions, ConditionReady)
 	return peer.Status.Status == nr.Status &&
@@ -195,7 +198,8 @@ func peerStatusMatches(peer *v1alpha1.WireguardPeer, nr notReady) bool {
 		c.Status == metav1.ConditionFalse &&
 		c.Reason == nr.Reason &&
 		c.Message == nr.ConditionMessage &&
-		c.ObservedGeneration == peer.Generation
+		c.ObservedGeneration == peer.Generation &&
+		meta.FindStatusCondition(peer.Status.Conditions, ConditionPortForwarding) == nil
 }
 
 // skipPeerWrite reports whether err from a peer status write means "skip this peer for this pass":
@@ -239,7 +243,11 @@ func addressUsable(addr, cidr4 string) bool {
 		return false
 	}
 	p = p.Masked()
-	return p.Contains(a) && a != p.Addr() && a != p.Addr().Next()
+	srv, err := ipam.ServerAddress(p)
+	if err != nil {
+		return false
+	}
+	return p.Contains(a) && a != p.Addr() && a != srv
 }
 
 // conflictLoser is a peer that must give up a value (its status.address or its spec.publicKey) to

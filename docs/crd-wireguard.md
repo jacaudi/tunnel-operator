@@ -2,7 +2,8 @@
 
 The server. One `Wireguard` yields one WireGuard server pod, its key Secret and a ClusterIP
 Service, all in the CR's namespace. **Namespaced**, group `vpn.tunnel-operator.io`, version
-`v1alpha1`, no short name. `kubectl get wireguard` prints `STATUS` (`.status.status`) and `AGE`.
+`v1alpha1`, no short name. `kubectl get wireguard` prints `STATUS` (`.status.status`), `EXIT IP`
+(`.status.egress.exitIP`), `PORT` (`.status.egress.forwardedPort`) and `AGE`.
 
 Source of truth: [`api/v1alpha1/wireguard_types.go`](../api/v1alpha1/wireguard_types.go). See
 [`examples/01-server.yaml`](../examples/01-server.yaml).
@@ -18,6 +19,7 @@ Source of truth: [`api/v1alpha1/wireguard_types.go`](../api/v1alpha1/wireguard_t
 | `gluetun.env` | []`EnvVar` | — | Passed through to the `gluetun` container, after the variables the operator renders. Setting a reserved variable (below) sets `Degraded` with reason `ReservedGluetunEnv`. |
 | `gluetun.envFrom` | []`EnvFromSource` | — | Passed through to the `gluetun` container. Reference provider credentials from a Secret here rather than writing them inline in `env`. A reserved variable among a referenced Secret's keys (with `prefix`, if set) sets `ReservedGluetunEnv`. A referenced ConfigMap is not checked, because the rendered value takes precedence. |
 | `gluetun.resources` | `ResourceRequirements` | — | Requests and limits for the `gluetun` container. |
+| `gluetun.portForwarding.staticPort` | int32 | — | A fixed forwarded port, 1 to 65535, for a provider or setup where the port does not change. When set, the agent forwards it to the pod holding the port instead of the port gluetun reports. Native forwarding (PIA, ProtonVPN, Perfect Privacy, PrivateVPN) re-obtains its port, which may change, on every tunnel-up, so leave this unset there. See [gluetun-egress.md](gluetun-egress.md#forwarded-port). |
 | `nodeSelector` | map[string]string | — | Copied to the server pod's `nodeSelector`. |
 | `tolerations` | []`Toleration` | — | Copied to the server pod's `tolerations`. |
 | `agent.resources` | `ResourceRequirements` | — | Requests and limits for the `agent` container. The `sysctl` init container gets none. |
@@ -28,7 +30,7 @@ gateway sets `envFrom` or `env`.
 
 ### Reserved gluetun variables
 
-The operator renders these seven variables, in this order and before `gluetun.env`, because the
+The operator renders these eleven variables, in this order and before `gluetun.env`, because the
 server's routing depends on each value. They come from `ReservedGluetunEnv` in
 [`internal/resources/gluetun.go`](../internal/resources/gluetun.go).
 
@@ -41,6 +43,10 @@ server's routing depends on each value. They come from `ReservedGluetunEnv` in
 | `FIREWALL_OUTBOUND_SUBNETS` | `localCIDRs`, joined by commas | Lets the pod reach and answer cluster addresses over `eth0`. |
 | `HEALTH_SERVER_ADDRESS` | `127.0.0.1:9999` | The agent's `/health` polls it. |
 | `WIREGUARD_MTU` | `1320` | Pins the tunnel MTU. |
+| `HTTP_CONTROL_SERVER_ADDRESS` | `127.0.0.1:8000` | gluetun's control server listens on loopback only; just the agent reaches it. |
+| `HTTP_CONTROL_SERVER_AUTH_CONFIG_FILEPATH` | `/gluetun/auth/config.toml` | The role file the operator mounts from the server Secret's `gluetun-auth.toml`. |
+| `HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE` | `{}` | An empty default role, so every route the role file does not name, such as `/v1/vpn/settings`, which returns credentials, answers `401`. |
+| `VPN_PORT_FORWARDING_LISTENING_PORT` | empty | gluetun's REDIRECT to a local port would compete with the agent's DNAT of the forwarded port. |
 
 Everything else is gluetun's own configuration; see [gluetun-egress.md](gluetun-egress.md).
 
@@ -53,6 +59,13 @@ Everything else is gluetun's own configuration; see [gluetun-egress.md](gluetun-
 | `endpoint` | The address a client dials: the Service's ClusterIP and the WireGuard port, `<ClusterIP>:51820`. Written with every `Ready` condition, `True` or `False`; keeps its last value while the server is `Degraded`. |
 | `publicKey` | The server's WireGuard public key. Written with every `Ready` condition, `True` or `False`; keeps its last value while the server is `Degraded`. |
 | `conditions` | Standard `metav1.Condition` list, keyed by `type`. See below. |
+| `egressAPI` | The egress API URL attached pods call: `http://<server tunnel address>:8081`, the first host of `peerCIDR`. Written with a `Ready=True` condition only; keeps its last value otherwise. See [gluetun-egress.md](gluetun-egress.md#egress-api). |
+| `egress` | What the agent reports, refreshed about every 30 s; each field is absent when unknown. The poll needs TCP `8080` on the gateway pod, and a failed poll keeps the last value (see [Freshness of status](gluetun-egress.md#freshness-of-status)). Fields below. |
+| `egress.exitIP` | The public IP the gateway egresses from. |
+| `egress.forwardedPort` | The forwarded port in use: `spec.gluetun.portForwarding.staticPort` when set, else the port gluetun reports. |
+| `egress.forwardedPortPeer` | The peer holding the forwarded port, as `<namespace>/<name>`. |
+| `egress.lastCycle` | The last VPN cycle the agent finished: `reason` (`Succeeded`, `IPUnchanged`, `EmptyIP`, `Timeout` or `GluetunError`), `oldExitIP`, `newExitIP`, `trigger` (`api:<peer address>` or `annotation:<value>`) and `finishedAt` (whole seconds). |
+| `egress.lastHandledAnnotation` | The last `tunnel-operator.io/cycle-requested-at` value the agent acted on. |
 
 ## Conditions
 
@@ -60,6 +73,7 @@ Everything else is gluetun's own configuration; see [gluetun-egress.md](gluetun-
 |---|---|
 | `Ready` | `True`, reason `Active`, once the Service, key Secret and Deployment are applied, every admissible peer was processed, and the Deployment rendered from this generation has rolled out: its controller has observed the generation and one pod is updated and ready. That pod is ready only when `wg0` is synced, the datapath is asserted, a peer's packet arriving on `wg0` would be forwarded into the tunnel (see [gluetun-egress.md](gluetun-egress.md#readiness-follows-the-tunnel)), and gluetun reports healthy. `False`, reason `DeploymentNotReady`, until then, with a message such as `Deployment vpn-dep is not rolled out: 0/1 ready, 1/1 updated`. A peer the pool cannot serve reports `AddressPoolExhausted` and does not hold the server back. |
 | `Progressing` | `True`, reason `FetchingStatus`, written on the first reconcile of a new object. The operator does not set it back to `False` today. |
+| `Cycled` | Mirrors `status.egress.lastCycle`: `True` with reason `Succeeded`, `False` with that reason (`IPUnchanged`, `EmptyIP`, `Timeout` or `GluetunError`), or `False` with reason `Unknown` for a reason the operator does not recognise. The trigger and IPs are in `lastCycle`, not in the message. Absent until a cycle has finished. |
 | `Degraded` | `True` when the spec cannot be rendered, or when building or applying an owned object fails. Reasons: `InvalidPeerCIDR`, `ProbeAddressInPeerCIDR`, `InvalidLocalCIDRs`, `PeerCIDROverlapsLocalCIDRs`, `ProbeAddressInLocalCIDRs`, `ClusterIPOutsideLocalCIDRs`, `ReservedGluetunEnv`, `ServiceBuildFailed`, `ServiceApplyFailed`, `DeploymentBuildFailed`, `DeploymentApplyFailed`; the message is the error. A spec problem is checked again every minute, so a fixed Secret clears `ReservedGluetunEnv` without a spec edit. Set to `False`, reason `Reconciled`, in any write of the `Ready` condition, `True` or `False`. |
 
 ## Owned objects
@@ -69,7 +83,7 @@ and are deleted with it.
 
 | Kind | Name | Contents |
 |---|---|---|
-| `Secret` | `<name>` | `privateKey` and `publicKey` (the server key pair), and `state.json` (the server's name, namespace and spec **without `spec.gluetun`**, plus its admitted peers, those with a valid key and an address, read by the agent). `spec.gluetun` is dropped so that provider credentials never reach a second Secret. |
+| `Secret` | `<name>` | `privateKey` and `publicKey` (the server key pair), `gluetun-api-key` (the agent's key for gluetun's control server, generated once and kept; to rotate it, delete the key and restart the gateway pod), `gluetun-auth.toml` (gluetun's role file) and `state.json` (the server's name, namespace and spec **without `spec.gluetun`**, plus its admitted peers, those with a valid key and an address, plus an `Egress` block: who may cycle, who holds the forwarded port, `staticPort`, the cycle annotation and `lastHandledAnnotation`; read by the agent). `spec.gluetun` is dropped so that provider credentials never reach a second Secret. |
 | `Service` | `<name>-svc` | `ClusterIP`, one port `wireguard`, UDP `51820`. |
 | `Deployment` | `<name>-dep` | One replica, strategy `Recreate`: the old pod is gone before the new one starts, because one pod owns the key and the tunnel. Init container `sysctl` (privileged, sets `net.ipv4.ip_forward=1`). Container `agent` (`NET_ADMIN`, read-only root filesystem, UDP `51820`, readiness `GET /health` with a 5 s timeout, liveness TCP on `8080`). Container `gluetun` (the pinned image `ghcr.io/qdm12/gluetun:v3.41.3@sha256:…`, `NET_ADMIN`, writable root filesystem, no probes of its own, and a `postStart` hook that deletes a stale `ip rule` for table `51820` so an abruptly restarted gluetun can start). Seccomp `RuntimeDefault`; no service-account token. |
 
@@ -80,6 +94,11 @@ and are deleted with it.
   but only when it is in the namespace the operator runs in; the annotation anywhere else is ignored.
   Exactly one such `Wireguard` must exist for injection to run. See
   [injection.md](injection.md#the-default-gateway).
+- **A VPN cycle is requested by annotation.** Setting `tunnel-operator.io/cycle-requested-at` to a
+  new non-empty value makes the agent cycle gluetun once for that value, for a new exit IP:
+  `kubectl annotate wireguard <name> tunnel-operator.io/cycle-requested-at=<RFC3339> --overwrite`.
+  All egress through the gateway stops for about 10 to 30 seconds. See
+  [gluetun-egress.md](gluetun-egress.md#cycling-the-vpn).
 - **The server key is minted once.** The operator generates the key pair when the Secret does not
   exist and reuses it afterwards. Deleting the Secret makes the next reconcile mint a new key,
   and every client then needs the new public key.

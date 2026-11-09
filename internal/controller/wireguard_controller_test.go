@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/jacaudi/tunnel-operator/api/v1alpha1"
@@ -1679,6 +1680,125 @@ var _ = Describe("wireguard controller", func() {
 			})).Should(Succeed())
 
 			expectDegradedWithoutDeployment(key, "ReservedGluetunEnv|Secret gluetun-creds, referenced by spec.gluetun.envFrom[0], sets VPN_TYPE, which the operator renders")
+		})
+
+		It("reports ReservedGluetunEnv for spec.gluetun.env setting HTTP_CONTROL_SERVER_ADDRESS", func() {
+			key := types.NamespacedName{Name: "vpn-resctl", Namespace: wgNamespace}
+			Expect(k8sClient.Create(context.Background(), &v1alpha1.Wireguard{
+				ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+				Spec: v1alpha1.WireguardSpec{
+					LocalCIDRs: testLocalCIDRs,
+					Gluetun: v1alpha1.GluetunSpec{Env: []corev1.EnvVar{
+						{Name: "HTTP_CONTROL_SERVER_ADDRESS", Value: ":8000"},
+					}},
+				},
+			})).Should(Succeed())
+
+			expectDegradedWithoutDeployment(key, "ReservedGluetunEnv|spec.gluetun.env sets HTTP_CONTROL_SERVER_ADDRESS, which the operator renders")
+		})
+
+		Context("the gluetun API key", func() {
+			// gluetunSecret returns the data of the Secret named by key, or nil while it is unreadable.
+			gluetunSecret := func(key types.NamespacedName) map[string][]byte {
+				secret := &corev1.Secret{}
+				if err := k8sClient.Get(context.Background(), key, secret); err != nil {
+					return nil
+				}
+				return secret.Data
+			}
+
+			It("gives a new Wireguard's Secret a 43-character key and an auth file that contains it", func() {
+				key := types.NamespacedName{Name: "vpn-newkey", Namespace: wgNamespace}
+				wg := &v1alpha1.Wireguard{
+					ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+					Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
+				}
+				Expect(k8sClient.Create(context.Background(), wg)).Should(Succeed())
+				defer func() {
+					_ = k8sClient.Delete(context.Background(), wg)
+					_ = k8sClient.Delete(context.Background(), &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: key.Name + "-dep", Namespace: key.Namespace}})
+					_ = k8sClient.Delete(context.Background(), &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: key.Name + "-svc", Namespace: key.Namespace}})
+				}()
+
+				Eventually(func() int { return len(gluetunSecret(key)[resources.SecretKeyGluetunAPIKey]) }, Timeout, Interval).
+					Should(Equal(43), "32 random bytes in unpadded base64url")
+				data := gluetunSecret(key)
+				Expect(string(data[resources.SecretKeyGluetunAPIKey])).Should(MatchRegexp(`^[A-Za-z0-9_-]{43}$`))
+				Expect(data[resources.SecretKeyGluetunAuth]).Should(Equal(resources.GluetunAuthTOML(string(data[resources.SecretKeyGluetunAPIKey]))))
+			})
+
+			It("adds the keys to a Secret that lacks them and keeps the same key thereafter", func() {
+				key := types.NamespacedName{Name: "vpn-oldsecret", Namespace: wgNamespace}
+				privateKey, err := wgtypes.GeneratePrivateKey()
+				Expect(err).ShouldNot(HaveOccurred())
+				// The Secret an operator without the egress API wrote, created before the Wireguard so the
+				// first reconcile finds it.
+				Expect(k8sClient.Create(context.Background(), &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+					Data: map[string][]byte{
+						"state.json": []byte("{}"),
+						"privateKey": []byte(privateKey.String()),
+						"publicKey":  []byte(privateKey.PublicKey().String()),
+					},
+				})).Should(Succeed())
+
+				wg := &v1alpha1.Wireguard{
+					ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+					Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
+				}
+				Expect(k8sClient.Create(context.Background(), wg)).Should(Succeed())
+				defer func() {
+					_ = k8sClient.Delete(context.Background(), wg)
+					_ = k8sClient.Delete(context.Background(), &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: key.Name + "-dep", Namespace: key.Namespace}})
+					_ = k8sClient.Delete(context.Background(), &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: key.Name + "-svc", Namespace: key.Namespace}})
+				}()
+
+				Eventually(func() int { return len(gluetunSecret(key)[resources.SecretKeyGluetunAPIKey]) }, Timeout, Interval).
+					Should(Equal(43))
+				first := gluetunSecret(key)
+				Expect(first[resources.SecretKeyGluetunAuth]).Should(Equal(resources.GluetunAuthTOML(string(first[resources.SecretKeyGluetunAPIKey]))))
+				Expect(first["privateKey"]).Should(Equal([]byte(privateKey.String())), "the WireGuard identity must survive")
+				Expect(first["publicKey"]).Should(Equal([]byte(privateKey.PublicKey().String())))
+
+				// Nothing watches Pods, so reconciles after the first are forced by patching the Wireguard's annotation.
+				for i := range 3 {
+					Eventually(func() error {
+						live := &v1alpha1.Wireguard{}
+						if err := k8sClient.Get(context.Background(), key, live); err != nil {
+							return err
+						}
+						patch := client.MergeFrom(live.DeepCopy())
+						if live.Annotations == nil {
+							live.Annotations = map[string]string{}
+						}
+						live.Annotations["probe.test/nudge"] = strconv.Itoa(i)
+						return k8sClient.Patch(context.Background(), live, patch)
+					}, Timeout, Interval).Should(Succeed())
+				}
+				Consistently(func() map[string][]byte { return gluetunSecret(key) }, "3s", Interval).Should(Equal(first),
+					"a Secret that already has a gluetun-api-key must never get another")
+			})
+
+			It("has the key in the Secret by the time the Deployment is first observed", func() {
+				key := types.NamespacedName{Name: "vpn-order", Namespace: wgNamespace}
+				wg := &v1alpha1.Wireguard{
+					ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace},
+					Spec:       v1alpha1.WireguardSpec{LocalCIDRs: testLocalCIDRs},
+				}
+				Expect(k8sClient.Create(context.Background(), wg)).Should(Succeed())
+				defer func() {
+					_ = k8sClient.Delete(context.Background(), wg)
+					_ = k8sClient.Delete(context.Background(), &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: key.Name + "-dep", Namespace: key.Namespace}})
+					_ = k8sClient.Delete(context.Background(), &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: key.Name + "-svc", Namespace: key.Namespace}})
+				}()
+
+				// A tight interval, so the Deployment is caught as soon as it exists.
+				Eventually(func() error {
+					return k8sClient.Get(context.Background(), types.NamespacedName{Name: key.Name + "-dep", Namespace: key.Namespace}, &appsv1.Deployment{})
+				}, Timeout, 5*time.Millisecond).Should(Succeed())
+				Expect(gluetunSecret(key)).Should(HaveKey(resources.SecretKeyGluetunAPIKey),
+					"a pod must never start against a Secret without the key it mounts")
+			})
 		})
 	})
 

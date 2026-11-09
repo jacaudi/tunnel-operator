@@ -17,6 +17,10 @@ func TestReservedGluetunEnv(t *testing.T) {
 		{Name: "FIREWALL_OUTBOUND_SUBNETS", Value: "10.96.0.0/12,10.244.0.0/16"},
 		{Name: "HEALTH_SERVER_ADDRESS", Value: "127.0.0.1:9999"},
 		{Name: "WIREGUARD_MTU", Value: "1320"},
+		{Name: "HTTP_CONTROL_SERVER_ADDRESS", Value: "127.0.0.1:8000"},
+		{Name: "HTTP_CONTROL_SERVER_AUTH_CONFIG_FILEPATH", Value: "/gluetun/auth/config.toml"},
+		{Name: "HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE", Value: "{}"},
+		{Name: "VPN_PORT_FORWARDING_LISTENING_PORT", Value: ""},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ReservedGluetunEnv = %v, want %v", got, want)

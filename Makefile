@@ -134,7 +134,7 @@ docker-build-integration-test:  docker-build-manager
 # E2E_KUBECONFIG=~/.kube/config to merge the test cluster into your own config.
 E2E_KUBECONFIG ?= /tmp/wg-e2e-kubeconfig
 run-e2e: $(KIND)
-	KUBECONFIG=$(E2E_KUBECONFIG) KUBE_CONFIG=$(E2E_KUBECONFIG) KIND_BIN=${KIND} TUNNEL_OPERATOR_CHART_PATH="../../charts" AGENT_IMAGE=${AGENT_IMAGE} MANAGER_IMAGE=${MANAGER_IMAGE} SKIP_CLEANUP=${SKIP_CLEANUP} go test -tags=e2e ./internal/it/ -v -count=1 -timeout 25m
+	KUBECONFIG=$(E2E_KUBECONFIG) KUBE_CONFIG=$(E2E_KUBECONFIG) KIND_BIN=${KIND} TUNNEL_OPERATOR_CHART_PATH="../../charts" AGENT_IMAGE=${AGENT_IMAGE} MANAGER_IMAGE=${MANAGER_IMAGE} SKIP_CLEANUP=${SKIP_CLEANUP} go test -tags=e2e ./internal/it/ -v -count=1 -timeout 40m
 
 docker-push: ## Push docker image with the manager.
 	docker push ${IMG}

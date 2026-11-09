@@ -130,7 +130,7 @@ var _ = Describe("label-driven sidecar injection", func() {
 		waitForDeploymentTobeReady("exit", operatorNamespace, GatewayTimeout)
 		exitIP := get(Default, "service/exit", operatorNamespace, "{.spec.clusterIP}")
 		Expect(exitIP).NotTo(BeEmpty())
-		output, err = KubectlApply(gatewayManifests(exitIP), operatorNamespace)
+		output, err = KubectlApply(gatewayManifests(exitIP, 0), operatorNamespace)
 		Expect(err).NotTo(HaveOccurred(), "apply the gateway: %s", output)
 		WaitForWireguardToBeReady("vpn", operatorNamespace, GatewayTimeout)
 

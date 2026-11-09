@@ -36,20 +36,78 @@ func buildDeployment(t *testing.T, wg *v1alpha1.Wireguard) *appsv1.Deployment {
 	return dep
 }
 
-func TestAgentContainerExposesOnlyWireguardAndHealthPorts(t *testing.T) {
-	containers := buildDeployment(t, testWireguard()).Spec.Template.Spec.Containers
-	i := slices.IndexFunc(containers, func(c corev1.Container) bool { return c.Name == "agent" })
+// containerNamed returns the container of the rendered pod called name.
+func containerNamed(t *testing.T, dep *appsv1.Deployment, name string) corev1.Container {
+	t.Helper()
+	containers := dep.Spec.Template.Spec.Containers
+	i := slices.IndexFunc(containers, func(c corev1.Container) bool { return c.Name == name })
 	if i < 0 {
-		t.Fatalf("containers = %v, want one named agent", containers)
+		t.Fatalf("containers = %v, want one named %s", containers, name)
 	}
+	return containers[i]
+}
 
-	got := map[string]int32{}
-	for _, p := range containers[i].Ports {
-		got[p.Name] = p.ContainerPort
+func TestAgentContainerPorts(t *testing.T) {
+	agent := containerNamed(t, buildDeployment(t, testWireguard()), "agent")
+
+	got := map[string]corev1.ContainerPort{}
+	for _, p := range agent.Ports {
+		got[p.Name] = p
 	}
-	want := map[string]int32{"wireguard": WireguardPort, "http": HTTPPort}
+	want := map[string]corev1.ContainerPort{
+		"wireguard":  {Name: "wireguard", ContainerPort: WireguardPort, Protocol: corev1.ProtocolUDP},
+		"http":       {Name: "http", ContainerPort: HTTPPort, Protocol: corev1.ProtocolTCP},
+		"egress-api": {Name: "egress-api", ContainerPort: 8081, Protocol: corev1.ProtocolTCP},
+	}
 	if !maps.Equal(got, want) {
 		t.Errorf("agent ports = %v, want %v", got, want)
+	}
+}
+
+func TestDeploymentMountsGluetunAuth(t *testing.T) {
+	wg := testWireguard()
+	dep := buildDeployment(t, wg)
+
+	i := slices.IndexFunc(dep.Spec.Template.Spec.Volumes, func(v corev1.Volume) bool { return v.Name == "gluetun-auth" })
+	if i < 0 {
+		t.Fatalf("volumes = %v, want one named gluetun-auth", dep.Spec.Template.Spec.Volumes)
+	}
+	wantVolume := corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+		SecretName: wg.Name,
+		Items:      []corev1.KeyToPath{{Key: "gluetun-auth.toml", Path: "config.toml"}},
+	}}
+	if got := dep.Spec.Template.Spec.Volumes[i].VolumeSource; !reflect.DeepEqual(got, wantVolume) {
+		t.Errorf("gluetun-auth volume = %+v, want %+v", got, wantVolume)
+	}
+
+	// A directory mount: a subPath mount would never see the file change.
+	wantMount := corev1.VolumeMount{Name: "gluetun-auth", MountPath: "/gluetun/auth", ReadOnly: true}
+	if got := containerNamed(t, dep, "gluetun").VolumeMounts; !reflect.DeepEqual(got, []corev1.VolumeMount{wantMount}) {
+		t.Errorf("gluetun volume mounts = %+v, want [%+v]", got, wantMount)
+	}
+	// The agent reads the key from its env; it never needs gluetun's role file.
+	for _, m := range containerNamed(t, dep, "agent").VolumeMounts {
+		if m.Name == "gluetun-auth" {
+			t.Errorf("agent mounts %+v, want no gluetun-auth", m)
+		}
+	}
+}
+
+func TestDeploymentAgentGetsAPIKey(t *testing.T) {
+	wg := testWireguard()
+	dep := buildDeployment(t, wg)
+
+	want := corev1.EnvVar{Name: "GLUETUN_API_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+		LocalObjectReference: corev1.LocalObjectReference{Name: wg.Name},
+		Key:                  "gluetun-api-key",
+	}}}
+	if got := containerNamed(t, dep, "agent").Env; !reflect.DeepEqual(got, []corev1.EnvVar{want}) {
+		t.Errorf("agent env = %+v, want [%+v]", got, want)
+	}
+	for _, e := range containerNamed(t, dep, "gluetun").Env {
+		if e.Name == "GLUETUN_API_KEY" {
+			t.Errorf("gluetun env carries %s; only the agent gets the key", e.Name)
+		}
 	}
 }
 

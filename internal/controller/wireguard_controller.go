@@ -51,6 +51,8 @@ const (
 	ConditionReady       = "Ready"
 	ConditionProgressing = "Progressing"
 	ConditionDegraded    = "Degraded"
+	// ConditionCycled mirrors status.egress.lastCycle: True when the last VPN cycle Succeeded, False with its reason otherwise.
+	ConditionCycled = "Cycled"
 )
 
 // WireguardReconciler reconciles a Wireguard object
@@ -63,6 +65,9 @@ type WireguardReconciler struct {
 	// APIReader reads straight from the apiserver. It serves the reads the manager's filtered Pod cache
 	// cannot: the cache holds only pods labelled for injection, so the gateway pods are invisible to Client.
 	APIReader client.Reader
+
+	// EgressReader polls a Ready server's agent for status.egress; nil skips the poll.
+	EgressReader EgressReader
 
 	// Resource builders
 	secretBuilder     *resources.SecretBuilder
@@ -99,7 +104,10 @@ type serverIdentity struct {
 // rendered: cond.ObservedGeneration is wg's generation, never that of the copy re-read here for a
 // fresh resourceVersion, so a spec patch that lands mid-reconcile cannot be reported as observed.
 // A non-nil identity sets status.endpoint and status.publicKey in the same write; nil leaves them.
-func (r *WireguardReconciler) updateStatus(ctx context.Context, wg *v1alpha1.Wireguard, cond metav1.Condition, identity *serverIdentity) error {
+// A non-nil egress sets status.egressAPI, status.egress and the Cycled condition in that write too (see
+// applyEgress); nil leaves them. The write is unconditional: an update identical to the stored object is a
+// no-op on the apiserver, so stability comes from deterministic values, not from skipping the call.
+func (r *WireguardReconciler) updateStatus(ctx context.Context, wg *v1alpha1.Wireguard, cond metav1.Condition, identity *serverIdentity, egress *egressUpdate) error {
 	latest := &v1alpha1.Wireguard{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(wg), latest); err != nil {
 		if errors.IsNotFound(err) {
@@ -146,6 +154,9 @@ func (r *WireguardReconciler) updateStatus(ctx context.Context, wg *v1alpha1.Wir
 	if identity != nil {
 		latest.Status.Endpoint = identity.Endpoint
 		latest.Status.PublicKey = identity.PublicKey
+	}
+	if egress != nil {
+		applyEgress(&latest.Status, wg.Generation, egress)
 	}
 
 	if err := r.Status().Update(ctx, latest); err != nil {
@@ -336,11 +347,13 @@ func (r *WireguardReconciler) markPeerNotReady(ctx context.Context, peer *v1alph
 	}
 	peer.Status.Status = nr.Status
 	peer.Status.Message = nr.Message
-	// A not-ready peer (not admitted, or a dedupe loser) releases its address and the gateway identity.
+	// A not-ready peer (not admitted, or a dedupe loser) releases its address, the gateway identity and any
+	// PortForwarding condition: it is not eligible for the port.
 	peer.Status.Address = ""
 	peer.Status.Endpoint = ""
 	peer.Status.ServerPublicKey = ""
 	peer.Status.LocalCIDRs = nil
+	meta.RemoveStatusCondition(&peer.Status.Conditions, ConditionPortForwarding)
 	meta.SetStatusCondition(&peer.Status.Conditions, metav1.Condition{
 		Type:               ConditionReady,
 		Status:             metav1.ConditionFalse,
@@ -439,6 +452,13 @@ func (r *WireguardReconciler) specProblem(ctx context.Context, wg *v1alpha1.Wire
 	return "", "", nil
 }
 
+// replaceSecret writes desired over current, conditionally on current's ResourceVersion: the Update
+// fails with a Conflict if the Secret has changed since current was read.
+func (r *WireguardReconciler) replaceSecret(ctx context.Context, current, desired *corev1.Secret) error {
+	desired.ResourceVersion = current.ResourceVersion
+	return r.Update(ctx, desired)
+}
+
 // +kubebuilder:rbac:groups=vpn.tunnel-operator.io,resources=wireguards,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=vpn.tunnel-operator.io,resources=wireguards/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=vpn.tunnel-operator.io,resources=wireguards/finalizers,verbs=update
@@ -484,7 +504,7 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	log.Info("processing " + wireguard.Name)
 
 	if wireguard.Status.Status == "" {
-		err = r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionProgressing, Status: metav1.ConditionTrue, Reason: "FetchingStatus", Message: "Fetching Wireguard status"}, nil)
+		err = r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionProgressing, Status: metav1.ConditionTrue, Reason: "FetchingStatus", Message: "Fetching Wireguard status"}, nil, nil)
 
 		if err != nil {
 			return ctrl.Result{}, err
@@ -498,7 +518,7 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if reason, msg, err := r.specProblem(ctx, wireguard); err != nil {
 		return ctrl.Result{}, err
 	} else if reason != "" {
-		return ctrl.Result{RequeueAfter: time.Minute}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionDegraded, Status: metav1.ConditionTrue, Reason: reason, Message: msg}, nil)
+		return ctrl.Result{RequeueAfter: time.Minute}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionDegraded, Status: metav1.ConditionTrue, Reason: reason, Message: msg}, nil, nil)
 	}
 
 	// service
@@ -513,7 +533,7 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return r.failDegraded(ctx, wireguard, err, "ServiceApplyFailed", "Failed to apply service")
 	}
 	if err := clusterIPOutside(desiredSvc.Name, desiredSvc.Spec.ClusterIP, wireguard.Spec.LocalCIDRs); err != nil {
-		return ctrl.Result{RequeueAfter: time.Minute}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionDegraded, Status: metav1.ConditionTrue, Reason: ReasonClusterIPOutsideLocalCIDRs, Message: err.Error()}, nil)
+		return ctrl.Result{RequeueAfter: time.Minute}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionDegraded, Status: metav1.ConditionTrue, Reason: ReasonClusterIPOutsideLocalCIDRs, Message: err.Error()}, nil, nil)
 	}
 
 	// peers
@@ -529,11 +549,23 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// fetch secret
 	secret := &corev1.Secret{}
 	err = r.Get(ctx, types.NamespacedName{Name: wireguard.Name, Namespace: wireguard.Namespace}, secret)
+
+	// egress
+	//
+	// The current forwarded-port holder is read back from state.json, so the port stays where it is while
+	// its peer is still eligible. No Secret, or an unreadable state, names no holder.
+	var stored agent.State
+	_ = json.Unmarshal(secret.Data["state.json"], &stored)
+	egress, portReasons, egressErr := r.desiredEgress(ctx, wireguard, admitted, stored.Egress.ForwardedPortPeerName)
+	if egressErr != nil {
+		return ctrl.Result{}, egressErr
+	}
+
 	// secret already created
 	if err == nil {
 		privateKey := string(secret.Data["privateKey"])
 
-		state := desiredState(wireguard, privateKey, admitted)
+		state := desiredState(wireguard, privateKey, admitted, egress)
 
 		b, err := json.Marshal(state)
 		if err != nil {
@@ -541,16 +573,27 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, err
 		}
 
-		if !bytes.Equal(b, secret.Data["state.json"]) {
-			log.Info("Updating secret with new config")
-			publicKey := string(secret.Data["publicKey"])
+		// A key already stored is kept; one is generated only when the Secret has none. The read may be
+		// stale, so replaceSecret writes conditionally on the version read: a reconcile that missed the key
+		// conflicts rather than replacing it. The key is never logged.
+		gluetunAPIKey := string(secret.Data[resources.SecretKeyGluetunAPIKey])
+		if gluetunAPIKey == "" {
+			gluetunAPIKey = resources.NewGluetunAPIKey()
+		}
 
-			updatedSecret, err := r.secretBuilder.ForWireguard(wireguard, b, privateKey, publicKey)
-			if err != nil {
-				log.Error(err, "Failed to build secret with new config")
-				return ctrl.Result{}, err
-			}
-			if err := r.Update(ctx, updatedSecret); err != nil {
+		publicKey := string(secret.Data["publicKey"])
+		updatedSecret, err := r.secretBuilder.ForWireguard(wireguard, b, privateKey, publicKey, gluetunAPIKey)
+		if err != nil {
+			log.Error(err, "Failed to build secret with new config")
+			return ctrl.Result{}, err
+		}
+
+		if !maps.EqualFunc(secret.Data, updatedSecret.Data, bytes.Equal) {
+			log.Info("Updating secret with new config")
+			if err := r.replaceSecret(ctx, secret, updatedSecret); errors.IsConflict(err) {
+				// The Secret changed since it was read; the next reconcile reads the new one.
+				return ctrl.Result{RequeueAfter: time.Second}, nil
+			} else if err != nil {
 				log.Error(err, "Failed to update secret with new config")
 				return ctrl.Result{}, err
 			}
@@ -594,7 +637,9 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		privateKey := key.String()
 		publicKey := key.PublicKey().String()
 
-		state := desiredState(wireguard, privateKey, admitted)
+		gluetunAPIKey := resources.NewGluetunAPIKey()
+
+		state := desiredState(wireguard, privateKey, admitted, egress)
 
 		b, err := json.Marshal(state)
 		if err != nil {
@@ -602,7 +647,7 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, err
 		}
 
-		secret, err := r.secretBuilder.ForWireguard(wireguard, b, privateKey, publicKey)
+		secret, err := r.secretBuilder.ForWireguard(wireguard, b, privateKey, publicKey, gluetunAPIKey)
 		if err != nil {
 			log.Error(err, "Failed to build secret", "wireguard.Name", wireguard.Name)
 			return ctrl.Result{}, err
@@ -610,7 +655,10 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		log.Info("Creating a new secret", "secret.Namespace", secret.Namespace, "secret.Name", secret.Name)
 
-		if err := r.Create(ctx, secret); err != nil {
+		if err := r.Create(ctx, secret); errors.IsAlreadyExists(err) {
+			// The NotFound above was a stale read; the next reconcile reads the Secret, as after a conflict.
+			return ctrl.Result{RequeueAfter: time.Second}, nil
+		} else if err != nil {
 			log.Error(err, "Failed to create new secret", "secret.Namespace", secret.Namespace, "secret.Name", secret.Name)
 			return ctrl.Result{}, err
 		}
@@ -642,14 +690,28 @@ func (r *WireguardReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if err := r.syncPeerIdentity(ctx, wireguard, *identity, admitted); err != nil {
 		return ctrl.Result{}, err
 	}
-
-	// desiredDep holds the apiserver's response to the apply, so it carries the Deployment's current
-	// status. No requeue: Owns(&appsv1.Deployment{}) re-enqueues on every Deployment status change.
-	if msg := rolloutProblem(desiredDep); msg != "" {
-		return ctrl.Result{}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionReady, Status: metav1.ConditionFalse, Reason: ReasonDeploymentNotReady, Message: msg}, identity)
+	if err := r.syncPortForwarding(ctx, admitted, portReasons); err != nil {
+		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionReady, Status: metav1.ConditionTrue, Reason: "Active", Message: "VPN is active!"}, identity)
+	// desiredDep holds the apiserver's response to the apply, so it carries the Deployment's current
+	// status. No requeue while it is not ready: Owns(&appsv1.Deployment{}) re-enqueues on every Deployment
+	// status change.
+	if msg := rolloutProblem(desiredDep); msg != "" {
+		return ctrl.Result{}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionReady, Status: metav1.ConditionFalse, Reason: ReasonDeploymentNotReady, Message: msg}, identity, nil)
+	}
+
+	// A Ready server is polled for its egress status, which nothing else triggers, so it is requeued; the poll
+	// and the status it rides in are one write.
+	egressAPI, err := egressAPIURL(wireguard)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: resources.EgressPollInterval}, r.updateStatus(ctx, wireguard, metav1.Condition{Type: ConditionReady, Status: metav1.ConditionTrue, Reason: "Active", Message: "VPN is active!"}, identity, &egressUpdate{
+		EgressAPI:         egressAPI,
+		ForwardedPortPeer: heldPeer(portReasons),
+		Report:            r.pollEgress(ctx, desiredDep),
+	})
 }
 
 // SetupWithManager sets up the controller with the Manager.

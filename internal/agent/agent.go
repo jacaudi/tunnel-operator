@@ -19,6 +19,18 @@ type State struct {
 	Server           v1alpha1.Wireguard
 	ServerPrivateKey string
 	Peers            []v1alpha1.WireguardPeer
+	Egress           Egress
+}
+
+// Egress is what the operator renders for the agent's egress API: who may cycle the VPN, who holds
+// the forwarded port, and the annotation trigger. The zero value is "nobody, no port, no request".
+type Egress struct {
+	CycleAllowed          []string // tunnel addresses of verified peers labelled cycle: allowed
+	ForwardedPortPeer     string   // the holder's tunnel address, or ""
+	ForwardedPortPeerName string   // the holder's namespace/name, or ""; the operator reads it back to keep the holder, the agent ignores it
+	StaticPort            int32    // spec.gluetun.portForwarding.staticPort, or 0
+	CycleRequestedAt      string   // the tunnel-operator.io/cycle-requested-at annotation value, or ""
+	LastHandledAnnotation string   // status.egress.lastHandledAnnotation, or ""
 }
 
 // PeerCIDR returns the server's peerCIDR from state, or ipam.DefaultPeerCIDR4 when it is empty.

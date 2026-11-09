@@ -34,7 +34,7 @@ a hand-configured client.
 | `endpoint` | The address the peer dials: the `Wireguard`'s `status.endpoint`, `<ClusterIP>:51820`. Copied by the operator once the peer is admitted, and cleared when it is not. |
 | `serverPublicKey` | The `Wireguard`'s `status.publicKey`. Copied and cleared with `endpoint`. |
 | `localCIDRs` | The `Wireguard`'s `spec.localCIDRs`, which the client keeps off the tunnel. Copied and cleared with `endpoint`. |
-| `conditions` | Standard `metav1.Condition` list, keyed by `type`. Empty for a healthy peer. |
+| `conditions` | Standard `metav1.Condition` list, keyed by `type`. Empty for a healthy peer, except that a peer eligible for the forwarded port carries `PortForwarding`. |
 
 What each state means:
 
@@ -62,6 +62,19 @@ What each state means:
 | `Ready=False` | `AddressConflict` | Another peer holds this peer's address and is the one that wins the dedupe (oldest `creationTimestamp`, smaller name and then namespace on a tie). The peer gives its address up and is allocated a new one. |
 | `Ready=False` | `PublicKeyConflict` | Another peer of the same server holds this peer's `publicKey`, and the message names it as `namespace/name`. This peer is not allocated an address, gets no copy of the gateway identity and is left out of the server's state, and it waits until the holder goes away. |
 | `Ready=False` | `AddressPoolExhausted` | The server's `peerCIDR` has no free address for this peer. The server stays `ready` and keeps serving the peers that hold addresses. |
+
+### `PortForwarding`
+
+A peer whose pod carries the `tunnel-operator.io/forwarded-port: "true"` label is a candidate for the
+gateway's forwarded port, and the operator records the outcome on it. The label counts only when the
+peer is controller-owned by the live pod: same name, same UID, not terminating. A peer that is not a
+candidate carries no `PortForwarding` condition. See
+[gluetun-egress.md](gluetun-egress.md#forwarded-port).
+
+| Type | Status and reason | Meaning |
+|---|---|---|
+| `PortForwarding` | `True`, `Held` | This peer holds the forwarded port. |
+| `PortForwarding` | `False`, `HeldByAnotherPeer` | Another peer holds it; the message names it as `namespace/name`. The holder keeps the port while it stays a candidate, otherwise the oldest peer wins. |
 
 ## Lifecycle notes
 

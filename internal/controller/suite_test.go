@@ -45,6 +45,10 @@ import (
 
 var k8sClient client.Client
 var writeCounter *countingClient
+
+// egressReader is the reconciler's EgressReader: specs set what each pod IP reports.
+var egressReader = newFakeEgressReader()
+
 var testEnv *envtest.Environment
 var wgTestImage = "test-image"
 
@@ -116,6 +120,7 @@ var _ = BeforeSuite(func() {
 		AgentImagePullPolicy: "IfNotPresent",
 		AgentImage:           wgTestImage,
 		APIReader:            k8sManager.GetAPIReader(),
+		EgressReader:         egressReader,
 	}).SetupWithManager(k8sManager)
 	Expect(err).ToNot(HaveOccurred())
 
